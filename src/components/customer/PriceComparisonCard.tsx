@@ -44,10 +44,9 @@ export function PriceComparisonCard({
   const { showToast } = useToast();
   const isWishlisted = wishlist.includes(product.id);
 
-  if (rates.length === 0) return null;
-
-  const lowestPrice = Math.min(...rates.map(r => r.currentPrice));
-  const highestSavings = product.mrp - lowestPrice;
+  const hasRates = rates && rates.length > 0;
+  const lowestPrice = hasRates ? Math.min(...rates.map(r => r.currentPrice)) : product.mrp;
+  const highestSavings = hasRates ? Math.max(0, product.mrp - lowestPrice) : 0;
 
   // 1-Click WhatsApp Order Formatter
   const handleWhatsAppOrder = (rateItem: ShopProductRate, e: React.MouseEvent) => {
@@ -151,114 +150,134 @@ export function PriceComparisonCard({
 
       {/* Live Rate Comparison Table across Nearby Shops */}
       <div className="bg-slate-50/80 border-t border-slate-100 p-3 sm:p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
-            Available at {rates.length} Nearby {rates.length === 1 ? 'Store' : 'Stores'}
-          </span>
-          <span className="text-[11px] text-slate-400 flex items-center space-x-1 font-semibold">
-            <Clock className="w-3 h-3" />
-            <span>Live Counter Rates</span>
-          </span>
-        </div>
+        {hasRates ? (
+          <>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                Available at {rates.length} Nearby {rates.length === 1 ? 'Store' : 'Stores'}
+              </span>
+              <span className="text-[11px] text-slate-400 flex items-center space-x-1 font-semibold">
+                <Clock className="w-3 h-3" />
+                <span>Live Counter Rates</span>
+              </span>
+            </div>
 
-        <div className="space-y-2">
-          {rates.map((rateItem, idx) => {
-            const isLowest = rateItem.currentPrice === lowestPrice;
+            <div className="space-y-2">
+              {rates.map((rateItem, idx) => {
+                const isLowest = rateItem.currentPrice === lowestPrice;
 
-            return (
-              <div
-                key={rateItem.id}
-                className={`p-3 rounded-2xl border transition-all flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 ${
-                  isLowest
-                    ? 'bg-emerald-50/80 border-emerald-300 ring-1 ring-emerald-400/40'
-                    : 'bg-white border-slate-200/90'
-                }`}
-              >
-                {/* Shop Name & Metadata */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center space-x-1.5">
-                    <button
-                      onClick={() => onOpenShop(rateItem.shopId)}
-                      className="font-bold text-xs sm:text-sm text-slate-900 hover:text-brand-700 truncate text-left"
-                    >
-                      {rateItem.shopName}
-                    </button>
-                    {rateItem.isVerified && (
-                      <span title="Verified Store" className="inline-flex shrink-0">
-                        <ShieldCheck className="w-3.5 h-3.5 text-brand-600" />
-                      </span>
-                    )}
-                    {isLowest && (
-                      <span className="bg-brand-600 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider shrink-0">
-                        Best Rate Nearby
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-2 text-[11px] text-slate-500 mt-0.5 font-medium">
-                    <span className="flex items-center space-x-0.5 text-brand-700 font-bold">
-                      <MapPin className="w-3 h-3" />
-                      <span>{formatDistance(rateItem.distanceKm)}</span>
-                    </span>
-                    <span>•</span>
-                    <span className="text-slate-400">{rateItem.freshnessLabel}</span>
-                    <span>•</span>
-                    <span className={rateItem.stockStatus === 'in_stock' ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'}>
-                      {rateItem.stockStatus === 'in_stock' ? 'In Stock' : 'Low Stock'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Price & Connect Actions */}
-                <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 shrink-0">
-                  <div className="text-left sm:text-right">
-                    <div className="text-base sm:text-lg font-black text-slate-900 leading-none">
-                      ₹{rateItem.currentPrice}
-                    </div>
-                    {product.mrp > rateItem.currentPrice && (
-                      <div className="text-[10px] font-extrabold text-brand-600 mt-0.5">
-                        Save ₹{product.mrp - rateItem.currentPrice}
+                return (
+                  <div
+                    key={rateItem.id}
+                    className={`p-3 rounded-2xl border transition-all flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 ${
+                      isLowest
+                        ? 'bg-emerald-50/80 border-emerald-300 ring-1 ring-emerald-400/40'
+                        : 'bg-white border-slate-200/90'
+                    }`}
+                  >
+                    {/* Shop Name & Metadata */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          onClick={() => onOpenShop(rateItem.shopId)}
+                          className="font-bold text-xs sm:text-sm text-slate-900 hover:text-brand-700 truncate text-left"
+                        >
+                          {rateItem.shopName}
+                        </button>
+                        {rateItem.isVerified && (
+                          <span title="Verified Store" className="inline-flex shrink-0">
+                            <ShieldCheck className="w-3.5 h-3.5 text-brand-600" />
+                          </span>
+                        )}
+                        {isLowest && (
+                          <span className="bg-brand-600 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider shrink-0">
+                            Best Rate Nearby
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* WhatsApp Hold at Counter, Directions, Call Buttons */}
-                  <div className="flex items-center space-x-1">
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        if (onHoldAtCounter) {
-                          onHoldAtCounter(product, rateItem);
-                        } else {
-                          handleWhatsAppOrder(rateItem, e);
-                        }
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-xl transition-all flex items-center space-x-1 shadow-sm font-bold text-xs"
-                      title="Reserve & Hold at Counter via WhatsApp"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>Hold</span>
-                    </button>
-                    <button
-                      onClick={e => handleDirections(rateItem, e)}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 rounded-xl transition-colors"
-                      title="Navigate on Google Maps"
-                    >
-                      <Navigation className="w-3.5 h-3.5 text-slate-600" />
-                    </button>
-                    <button
-                      onClick={e => handleCall(rateItem, e)}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 rounded-xl transition-colors"
-                      title="Call Store"
-                    >
-                      <Phone className="w-3.5 h-3.5 text-slate-600" />
-                    </button>
+                      <div className="flex items-center space-x-2 text-[11px] text-slate-500 mt-0.5 font-medium">
+                        <span className="flex items-center space-x-0.5 text-brand-700 font-bold">
+                          <MapPin className="w-3 h-3" />
+                          <span>{formatDistance(rateItem.distanceKm)}</span>
+                        </span>
+                        <span>•</span>
+                        <span className="text-slate-400">{rateItem.freshnessLabel}</span>
+                        <span>•</span>
+                        <span className={rateItem.stockStatus === 'in_stock' ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'}>
+                          {rateItem.stockStatus === 'in_stock' ? 'In Stock' : 'Low Stock'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Price & Connect Actions */}
+                    <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 shrink-0">
+                      <div className="text-left sm:text-right">
+                        <div className="text-base sm:text-lg font-black text-slate-900 leading-none">
+                          ₹{rateItem.currentPrice}
+                        </div>
+                        {product.mrp > rateItem.currentPrice && (
+                          <div className="text-[10px] font-extrabold text-brand-600 mt-0.5">
+                            Save ₹{product.mrp - rateItem.currentPrice}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* WhatsApp Hold at Counter, Directions, Call Buttons */}
+                      <div className="flex items-center space-x-1">
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (onHoldAtCounter) {
+                              onHoldAtCounter(product, rateItem);
+                            } else {
+                              handleWhatsAppOrder(rateItem, e);
+                            }
+                          }}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-xl transition-all flex items-center space-x-1 shadow-sm font-bold text-xs"
+                          title="Reserve & Hold at Counter via WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Hold</span>
+                        </button>
+                        <button
+                          onClick={e => handleDirections(rateItem, e)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 rounded-xl transition-colors"
+                          title="Navigate on Google Maps"
+                        >
+                          <Navigation className="w-3.5 h-3.5 text-slate-600" />
+                        </button>
+                        <button
+                          onClick={e => handleCall(rateItem, e)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 rounded-xl transition-colors"
+                          title="Call Store"
+                        >
+                          <Phone className="w-3.5 h-3.5 text-slate-600" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="py-2.5 px-3 rounded-2xl bg-white border border-slate-200/90 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span className="text-slate-500">Standard MRP:</span>
+                <span className="text-sm font-black text-slate-900">₹{product.mrp}</span>
               </div>
-            );
-          })}
-        </div>
+              <p className="text-[11px] text-slate-500">Local store counter rates updating</p>
+            </div>
+            <button
+              onClick={() => onSelectProduct(product)}
+              className="bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-xl font-bold text-xs shrink-0 shadow-sm transition-colors"
+            >
+              View Details
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Footer Link */}

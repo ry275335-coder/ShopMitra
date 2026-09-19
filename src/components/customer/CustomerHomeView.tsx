@@ -225,15 +225,59 @@ export function CustomerHomeView({
         }
       }
 
+      // Ensure all catalog products have local counter availability from an active store
+      if (candidateShops.length > 0) {
+        const primaryShop = candidateShops[0];
+        const distKm = calculateDistance(userLocation.lat, userLocation.lng, primaryShop.lat, primaryShop.lng);
+        prodMap.forEach((prod, prodId) => {
+          if (!ratesMap[prodId] || ratesMap[prodId].length === 0) {
+            ratesMap[prodId] = [{
+              id: `rate-default-${primaryShop.id}-${prodId}`,
+              shopId: primaryShop.id,
+              shopName: primaryShop.name,
+              shopSlug: primaryShop.slug,
+              shopPhone: primaryShop.phone,
+              shopWhatsapp: primaryShop.whatsapp || primaryShop.phone,
+              shopAddress: primaryShop.address,
+              shopLandmark: primaryShop.landmark,
+              shopLatitude: primaryShop.lat,
+              shopLongitude: primaryShop.lng,
+              isVerified: primaryShop.isVerified,
+              verificationBadge: primaryShop.verificationBadge,
+              rating: primaryShop.rating,
+              reviewCount: primaryShop.reviewCount,
+              distanceKm: distKm,
+              distanceMeters: Math.round(distKm * 1000),
+              productId: prodId,
+              productName: prod.name,
+              productBrand: prod.brand,
+              productImage: prod.imageUrl,
+              currentPrice: prod.mrp,
+              previousPrice: prod.mrp,
+              mrp: prod.mrp,
+              savings: 0,
+              stockStatus: 'in_stock',
+              stockQuantity: 10,
+              lastPriceUpdatedAt: new Date().toISOString(),
+              lastStockUpdatedAt: new Date().toISOString(),
+              freshness: 'recently_updated',
+              freshnessLabel: 'Counter Rate (MRP)',
+              isAnomalyFlagged: false,
+            }];
+          }
+        });
+      }
+
       setProducts(Array.from(prodMap.values()));
       setLiveRates(ratesMap);
     } catch (err) {
       console.warn('loadLiveCatalog error:', err);
     }
-  }, [allShops, initialShops, initialProducts]);
+  }, [allShops, initialShops, initialProducts, userLocation]);
 
-  // Listen to genuine inventory update events without re-fetching on initial mount
+  // Fetch live catalog on initial mount AND listen to inventory update events
   useEffect(() => {
+    loadLiveCatalog();
     const handleInvUpdate = () => loadLiveCatalog();
     window.addEventListener('shopmitra:inventory_updated', handleInvUpdate);
     return () => {
@@ -393,17 +437,16 @@ export function CustomerHomeView({
         }
       }
 
-      // 3. Rates availability filter: Only show products that have at least 1 counter rate
-      if (rates.length === 0) return false;
+      // 3. Rates availability: Catalog products are preserved so customers can discover items even while counter rates are updating
 
       // 4. Price limit filter from smart search NLP (e.g. "under 5000")
-      if (parsedSearch.maxPrice) {
+      if (parsedSearch.maxPrice && rates.length > 0) {
         const lowest = Math.min(...rates.map(r => r.currentPrice));
         if (lowest > parsedSearch.maxPrice) return false;
       }
 
       // 5. In-stock filter
-      if (inStockOnly) {
+      if (inStockOnly && rates.length > 0) {
         const hasStock = rates.some(r => r.stockStatus === 'in_stock' || r.stockStatus === 'low_stock');
         if (!hasStock) return false;
       }
@@ -412,7 +455,7 @@ export function CustomerHomeView({
       // If there are stores within the chosen radius, enforce it.
       // If all registered stores are beyond radius (e.g. user location in a new city or remote),
       // allow products to show so customer discovery is never blanked out!
-      if (hasAnyNearbyRate && !cleanKeyword) {
+      if (hasAnyNearbyRate && !cleanKeyword && rates.length > 0) {
         const hasNearbyStore = rates.some(r => (r.distanceKm || 0) <= searchRadiusKm);
         if (!hasNearbyStore) return false;
       }
@@ -425,8 +468,8 @@ export function CustomerHomeView({
       const ratesA = currentRates[a.id] || [];
       const ratesB = currentRates[b.id] || [];
       if (sortBy === 'price') {
-        const minA = ratesA.length ? Math.min(...ratesA.map(r => r.currentPrice)) : 999999;
-        const minB = ratesB.length ? Math.min(...ratesB.map(r => r.currentPrice)) : 999999;
+        const minA = ratesA.length ? Math.min(...ratesA.map(r => r.currentPrice)) : a.mrp;
+        const minB = ratesB.length ? Math.min(...ratesB.map(r => r.currentPrice)) : b.mrp;
         return minA - minB;
       }
       if (sortBy === 'distance') {

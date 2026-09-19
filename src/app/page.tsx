@@ -14,9 +14,9 @@ import {
 import { fetchDbShopProducts } from '@/lib/supabase/db';
 import { DEFAULT_USER_LOCATION } from '@/lib/geo';
 
-// Public marketplace catalog caching with 30s stale-while-revalidate.
-// Private user data (profiles, orders, merchant inventory, admin) is strictly client/session scoped.
-export const revalidate = 30;
+// Always execute dynamically on each request to ensure live catalog and fresh counter rates
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function HomePage() {
   // Fetch all 4 public catalog datasets in ONE single parallel batch — ZERO duplicate queries!
