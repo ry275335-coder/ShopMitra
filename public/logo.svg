@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22c55e" />
+      <stop offset="100%" stop-color="#15803d" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="24" fill="url(#grad1)"/>
+  <path d="M28 36L22 78C22 81 24 84 28 84H72C76 84 78 81 78 78L72 36H28Z" fill="#ffffff" fill-opacity="0.95"/>
+  <path d="M38 38V26C38 20 43 15 50 15C57 15 62 20 62 26V38" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="50" cy="58" r="14" fill="#15803d"/>
+  <text x="50" y="64" font-size="18" font-family="Arial, sans-serif" font-weight="bold" fill="#ffffff" text-anchor="middle">₹</text>
+</svg>

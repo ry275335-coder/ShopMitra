@@ -1,0 +1,60 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/cache
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Runtime audit logs
+audit_logs.jsonl
+*.log
+*.log*
+
+# Developer scratch files
+scratch/
+
+# Temporary debug scripts
+scripts/check-*
+scripts/inspect-*
+scripts/check_customer_data.mjs
+scripts/inspect_admin_tables.mjs
+scripts/debug-*.ts
+scripts/test-server-rates.ts
+scripts/test-rates.mjs
+scripts/rebuild-sql.js
+
+# Supabase CLI temporary files
+supabase/.temp/
+
+# Obsolete/insecure SQL bundles
+supabase/ENABLE_PUBLIC_ACCESS.sql
+supabase/RUN_IN_SUPABASE_DASHBOARD.sql

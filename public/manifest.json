@@ -1,0 +1,18 @@
+{
+  "name": "ShopMitra - Local Price Discovery & Nearby Shops",
+  "short_name": "ShopMitra",
+  "description": "Discover nearby physical shops, compare live product rates, and shop locally with zero commission.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
