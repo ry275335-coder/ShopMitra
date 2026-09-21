@@ -121,8 +121,9 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [registeredShops, setRegisteredShops] = useState<Shop[]>([]);
+  const [publicShops, setPublicShops] = useState<Shop[]>([]);
+  const [activeMerchantShopId, setActiveMerchantShopId] = useState<string>('');
   const [deletedShopIds, setDeletedShopIds] = useState<string[]>([]);
-  const [activeMerchantShopId, setActiveMerchantShopId] = useState('');
   const [wishlist, setWishlist] = useState<string[]>([]);
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
   const [customerUser, setCustomerUser] = useState<CustomerUser | null>(null);
@@ -251,6 +252,9 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       // Load merchant shops if merchant account exists
       if (status.hasMerchantAccount) {
         await loadMerchantShops(user.id);
+      } else {
+        setRegisteredShops([]);
+        setActiveMerchantShopId('');
       }
 
       // Securely populate admin customers only if confirmed admin
@@ -361,12 +365,20 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         });
 
         setRegisteredShops(shops);
-        if (shops.length > 0 && !activeMerchantShopId) {
-          setActiveMerchantShopId(shops[0].id);
-        }
+        setActiveMerchantShopId((prev) => {
+          if (prev && shops.some((s) => s.id === prev)) {
+            return prev;
+          }
+          return shops[0]?.id || '';
+        });
+      } else {
+        setRegisteredShops([]);
+        setActiveMerchantShopId('');
       }
     } catch (err) {
       console.warn('loadMerchantShops note:', err);
+      setRegisteredShops([]);
+      setActiveMerchantShopId('');
     }
   };
 
@@ -409,13 +421,11 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       // Public shop catalog
       fetchDbShops().then((dbShops) => {
         if (dbShops?.length > 0) {
-          setRegisteredShops((prev) => {
+          setPublicShops((prev) => {
             const map = new Map<string, Shop>();
             dbShops.forEach((s) => { if (!delIds.includes(s.id)) map.set(s.id, s); });
             prev.forEach((s) => { if (!delIds.includes(s.id)) map.set(s.id, s); });
-            const merged = Array.from(map.values());
-            if (merged.length > 0 && !activeMerchantShopId) setActiveMerchantShopId(merged[0].id);
-            return merged;
+            return Array.from(map.values());
           });
         }
       }).catch((err) => console.log('Supabase shops fetch note:', err));
@@ -547,12 +557,17 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       const filtered = prev.filter((s) => s.id !== shop.id);
       return [shop, ...filtered];
     });
+    setPublicShops((prev) => {
+      const filtered = prev.filter((s) => s.id !== shop.id);
+      return [shop, ...filtered];
+    });
     setActiveMerchantShopId(shop.id);
     setRole('merchant');
   };
 
   const updateRegisteredShop = (shop: Shop) => {
     setRegisteredShops((prev) => prev.map((s) => s.id === shop.id ? { ...s, ...shop } : s));
+    setPublicShops((prev) => prev.map((s) => s.id === shop.id ? { ...s, ...shop } : s));
     showToast('Store profile & counter location updated!');
   };
 
@@ -560,6 +575,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     try { await deleteShopAction(shopId); } catch (err) { console.warn('deleteShopAction notice:', err); }
     setDeletedShopIds((prev) => Array.from(new Set([...prev, shopId])));
     setRegisteredShops((prev) => prev.filter((s) => s.id !== shopId));
+    setPublicShops((prev) => prev.filter((s) => s.id !== shopId));
     setActiveMerchantShopId((prev) => {
       if (prev === shopId) {
         const remaining = registeredShops.filter((s) => s.id !== shopId);
@@ -570,7 +586,12 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     showToast('🗑️ Shop account deleted permanently', 'info');
   };
 
-  const allShops = useMemo(() => registeredShops.filter((s) => !deletedShopIds.includes(s.id)), [registeredShops, deletedShopIds]);
+  const allShops = useMemo(() => {
+    const map = new Map<string, Shop>();
+    publicShops.forEach((s) => { if (!deletedShopIds.includes(s.id)) map.set(s.id, s); });
+    registeredShops.forEach((s) => { if (!deletedShopIds.includes(s.id)) map.set(s.id, s); });
+    return Array.from(map.values());
+  }, [publicShops, registeredShops, deletedShopIds]);
 
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);

@@ -365,10 +365,12 @@ export interface UserAccountStatus {
  * Evaluates both Customer and Merchant accounts concurrently under auth.uid().
  */
 export async function getUserAccountStatus(userId: string): Promise<UserAccountStatus> {
-  const [profile, customer, merchant] = await Promise.all([
+  const supabase = createClient();
+  const [profile, customer, merchant, adminUserRes] = await Promise.all([
     getProfile(userId),
     getCustomerByProfileId(userId),
     getMerchantByProfileId(userId),
+    supabase.from('admin_users').select('admin_role, status').eq('user_id', userId).maybeSingle(),
   ]);
 
   let shops: any[] = [];
@@ -390,6 +392,11 @@ export async function getUserAccountStatus(userId: string): Promise<UserAccountS
     )
   );
 
+  const isAdmin = Boolean(
+    (adminUserRes?.data && adminUserRes.data.status === 'active' && ['super_admin', 'admin', 'moderator'].includes(adminUserRes.data.admin_role)) ||
+    (profile?.role && ['super_admin', 'admin', 'moderator'].includes(profile.role) && profile.isActive !== false)
+  );
+
   return {
     profile,
     hasCustomerAccount: hasValidCustomerProfile,
@@ -397,7 +404,7 @@ export async function getUserAccountStatus(userId: string): Promise<UserAccountS
     hasMerchantAccount: !!merchant,
     merchant,
     shops,
-    isAdmin: profile?.role === 'admin',
+    isAdmin,
   };
 }
 

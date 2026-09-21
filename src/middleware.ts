@@ -62,6 +62,9 @@ export async function middleware(request: NextRequest) {
 
   // ── Admin route protection ──────────────────────────────────────────────────
   if (pathname === '/admin/login') {
+    if (request.nextUrl.searchParams.has('error')) {
+      return response;
+    }
     if (isAuthenticated && user) {
       // If already authenticated, check if user is an active admin
       const { data: adminUser } = await supabase

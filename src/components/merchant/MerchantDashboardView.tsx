@@ -55,7 +55,6 @@ export function MerchantDashboardView({
   const { 
     activeMerchantShopId, 
     setActiveMerchantShopId, 
-    allShops, 
     registeredShops, 
     updateRegisteredShop, 
     customerUser,
@@ -111,9 +110,9 @@ export function MerchantDashboardView({
     }, 50);
   };
 
-  // Look in allShops (registered shops from Supabase/local)
-  const activeShop = (allShops && allShops.length > 0)
-    ? (allShops.find(s => s.id === activeMerchantShopId) || allShops[0])
+  // Strictly isolate: activeShop belongs strictly to the merchant's own registered shops
+  const activeShop = (registeredShops && registeredShops.length > 0)
+    ? (registeredShops.find(s => s.id === activeMerchantShopId) || registeredShops[0])
     : null;
 
   const [masterProducts, setMasterProducts] = useState<MasterProduct[]>([]);
@@ -354,7 +353,7 @@ export function MerchantDashboardView({
               Select Store / Branch
             </span>
             <span className="text-[10px] font-bold bg-merchant-100 text-merchant-800 px-2 py-0.2 rounded-full">
-              {allShops.length} Stores
+              {registeredShops.length} {registeredShops.length === 1 ? 'Store' : 'Stores'}
             </span>
           </div>
           <span className="text-[10px] font-bold text-slate-400 hidden xs:inline">
@@ -364,59 +363,63 @@ export function MerchantDashboardView({
 
         {/* Edge-to-Edge Touch Slider Strip */}
         <div className="flex items-stretch gap-2.5 overflow-x-auto pb-2 pt-1 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0 pr-8">
-          {allShops.map(s => {
-            const isSelected = activeShop ? s.id === activeShop.id : false;
-            const isRegistered = registeredShops.some(r => r.id === s.id);
-            return (
-              <button
-                key={s.id}
-                onClick={() => {
-                  setActiveMerchantShopId(s.id);
-                  showToast(`📍 Switched to ${s.name} (${s.city})`);
-                }}
-                className={`shrink-0 text-left p-3.5 rounded-2xl border transition-all flex flex-col justify-between w-[220px] xs:w-[250px] select-none ${
-                  isSelected
-                    ? 'bg-slate-900 text-white border-merchant-500 shadow-md ring-2 ring-merchant-500/40'
-                    : 'bg-white text-slate-800 border-slate-200 hover:border-merchant-300 hover:bg-slate-50'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1.5">
-                    <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
-                      isRegistered
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold'
-                        : isSelected
-                        ? 'bg-slate-800 text-slate-300'
-                        : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {isRegistered ? '⭐ My Store' : 'Demo Branch'}
-                    </span>
-                    {isSelected ? (
-                      <span className="flex items-center gap-1 text-[9px] font-black text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        <span>Active</span>
+          {registeredShops.length === 0 ? (
+            <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 text-slate-500 text-xs flex items-center gap-2.5">
+              <Store className="w-4 h-4 text-slate-400 shrink-0" />
+              <span>No stores registered yet. Click &apos;+ Add Store&apos; to register your branch!</span>
+            </div>
+          ) : (
+            registeredShops.map(s => {
+              const isSelected = activeShop ? s.id === activeShop.id : false;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setActiveMerchantShopId(s.id);
+                    showToast(`📍 Switched to ${s.name} (${s.city})`);
+                  }}
+                  className={`shrink-0 text-left p-3.5 rounded-2xl border transition-all flex flex-col justify-between w-[220px] xs:w-[250px] select-none ${
+                    isSelected
+                      ? 'bg-slate-900 text-white border-merchant-500 shadow-md ring-2 ring-merchant-500/40'
+                      : 'bg-white text-slate-800 border-slate-200 hover:border-merchant-300 hover:bg-slate-50'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
+                        isSelected
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        ⭐ My Store
                       </span>
-                    ) : (
-                      <span className="text-[9px] font-medium text-slate-400">Tap to view</span>
-                    )}
+                      {isSelected ? (
+                        <span className="flex items-center gap-1 text-[9px] font-black text-emerald-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                          <span>Active</span>
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-medium text-slate-400">Tap to view</span>
+                      )}
+                    </div>
+
+                    <h4 className={`text-xs font-black leading-snug line-clamp-2 ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                      {s.name}
+                    </h4>
                   </div>
 
-                  <h4 className={`text-xs font-black leading-snug line-clamp-2 ${isSelected ? 'text-white' : 'text-slate-900'}`}>
-                    {s.name}
-                  </h4>
-                </div>
-
-                <div className={`mt-3 pt-2 border-t flex items-center justify-between text-[10px] ${isSelected ? 'border-slate-800' : 'border-slate-100'}`}>
-                  <span className={`truncate max-w-[130px] ${isSelected ? 'text-slate-400' : 'text-slate-500'}`}>
-                    📍 {s.city || 'Local'}
-                  </span>
-                  <span className={`font-black ${isSelected ? 'text-merchant-400' : 'text-merchant-600'}`}>
-                    {isSelected ? 'Selected ✓' : 'Switch →'}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                  <div className={`mt-3 pt-2 border-t flex items-center justify-between text-[10px] ${isSelected ? 'border-slate-800' : 'border-slate-100'}`}>
+                    <span className={`truncate max-w-[130px] ${isSelected ? 'text-slate-400' : 'text-slate-500'}`}>
+                      📍 {s.city || 'Local'}
+                    </span>
+                    <span className={`font-black ${isSelected ? 'text-merchant-400' : 'text-merchant-600'}`}>
+                      {isSelected ? 'Selected ✓' : 'Switch →'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })
+          )}
 
           {/* "+ Add Store" Card at the end of the slider */}
           {onOpenOnboarding && (
@@ -525,11 +528,15 @@ export function MerchantDashboardView({
                   }}
                   className="bg-transparent text-xs font-bold text-white outline-none cursor-pointer w-full min-w-0 max-w-[170px] xs:max-w-[220px] sm:max-w-xs truncate"
                 >
-                  {allShops.map(s => (
-                    <option key={s.id} value={s.id} className="bg-slate-900 text-white font-bold">
-                      {registeredShops.some(r => r.id === s.id) ? '⭐ ' : ''}{s.name} ({s.city})
-                    </option>
-                  ))}
+                  {registeredShops.length === 0 ? (
+                    <option value="" className="bg-slate-900 text-white font-bold">No registered stores</option>
+                  ) : (
+                    registeredShops.map(s => (
+                      <option key={s.id} value={s.id} className="bg-slate-900 text-white font-bold">
+                        ⭐ {s.name} ({s.city})
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 

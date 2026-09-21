@@ -53,9 +53,11 @@ function AdminLoginContent() {
       setErrorMessage('You are not authorized to access the admin panel.');
     } else if (errorParam === 'suspended') {
       setErrorMessage('Access Denied: Your administrative account has been suspended.');
+    } else if (errorParam === 'auth_failed') {
+      setErrorMessage('Authentication link expired or invalid. Please request a fresh magic link.');
     }
 
-    // Auto-detect if user already authenticated in browser
+    // Auto-detect if user already authenticated in browser (only if no error was reported)
     async function checkExistingAuth() {
       try {
         const supabase = createClient();
@@ -73,7 +75,9 @@ function AdminLoginContent() {
         // Continue showing standard login
       }
     }
-    checkExistingAuth();
+    if (!errorParam) {
+      checkExistingAuth();
+    }
   }, [errorParam, nextParam, router]);
 
   useEffect(() => {
@@ -121,6 +125,10 @@ function AdminLoginContent() {
         }
         const siteUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
         const adminRedirect = `${siteUrl}/auth/callback?next=${encodeURIComponent(nextParam)}`;
+        // Set short-lived SameSite=Lax cookie remembering admin login origin (Requirement 19)
+        if (typeof document !== 'undefined') {
+          document.cookie = 'sm_admin_login_intent=1; path=/; max-age=900; SameSite=Lax';
+        }
         res = await sendEmailOtp(email.trim(), adminRedirect);
       }
 
