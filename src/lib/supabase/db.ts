@@ -85,20 +85,26 @@ export async function fetchDbProducts(): Promise<MasterProduct[]> {
       return [];
     }
 
-    return data.map(p => ({
-      id: p.id,
-      categoryId: p.category_id || '',
-      subcategoryId: p.subcategory_id || undefined,
-      name: p.name,
-      slug: p.slug || p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      brand: p.brand || '',
-      model: p.model || undefined,
-      description: undefined,
-      mrp: Number(p.mrp) || 0,
-      imageUrl: p.image_url || 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80',
-      galleryUrls: [],
-      specifications: {},
-    }));
+    return data.map(p => {
+      let img = p.image_url || 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';
+      if (typeof img === 'string' && img.startsWith('data:image') && img.length > 5000) {
+        img = 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';
+      }
+      return {
+        id: p.id,
+        categoryId: p.category_id || '',
+        subcategoryId: p.subcategory_id || undefined,
+        name: p.name,
+        slug: p.slug || p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        brand: p.brand || '',
+        model: p.model || undefined,
+        description: undefined,
+        mrp: Number(p.mrp) || 0,
+        imageUrl: img,
+        galleryUrls: [],
+        specifications: {},
+      };
+    });
   } catch (err) {
     console.error('fetchDbProducts error:', err);
     return [];
@@ -235,10 +241,16 @@ export async function fetchDbShops(): Promise<Shop[]> {
         weeklyHolidays: s.weekly_holidays || [],
         isOpen: s.is_open ?? true,
         isVerified: s.is_verified ?? false,
-        verificationBadge: s.verification_badge || (s.is_verified ? 'Verified Physical Retailer' : undefined),
-        photos: s.photos && s.photos.length > 0 ? s.photos : [
-          'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80'
-        ],
+        photos: (s.photos && s.photos.length > 0)
+          ? s.photos.map((p: string) => {
+              if (typeof p === 'string' && p.startsWith('data:image') && p.length > 5000) {
+                return 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80';
+              }
+              return p;
+            })
+          : [
+            'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80'
+          ],
         rating: Number(s.rating) || 5.0,
         reviewCount: Number(s.review_count) || 0,
         isActive: s.is_active ?? true,

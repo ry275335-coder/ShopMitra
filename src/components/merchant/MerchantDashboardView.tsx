@@ -15,6 +15,7 @@ import { DemandHeatmapView } from './DemandHeatmapView';
 import { getShopTelemetry, ShopTelemetry } from '@/lib/analytics/interactionTracker';
 import { ShopProduct, MasterProduct, Shop } from '@/types';
 import { fetchDbProducts, fetchDbShopProducts } from '@/lib/supabase/db';
+import { createClient } from '@/lib/supabase/client';
 import { 
   Store, 
   PlusCircle, 
@@ -223,17 +224,46 @@ export function MerchantDashboardView({
   const editCameraRef = React.useRef<HTMLInputElement | null>(null);
   const editGalleryRef = React.useRef<HTMLInputElement | null>(null);
 
-  const handleEditPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEditPhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setEditForm(prev => ({ ...prev, photoUrl: reader.result as string }));
-        showToast('📸 Storefront photo updated!');
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      showToast('Invalid format. Allowed formats are JPEG, PNG, and WebP.', 'error');
+      return;
+    }
+
+    try {
+      showToast('Uploading storefront photo...', 'info');
+      const supabase = createClient();
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const activeId = activeShop?.id || 'store';
+      const filePath = `storefronts/${activeId}_${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('shop-images')
+        .upload(filePath, file, { contentType: file.type, upsert: true });
+
+      if (uploadError) {
+        console.warn('Shop image storage upload fallback:', uploadError.message);
+        showToast('Storage upload failed: ' + uploadError.message, 'error');
+        return;
       }
-    };
-    reader.readAsDataURL(file);
+
+      const { data: urlData } = supabase.storage
+        .from('shop-images')
+        .getPublicUrl(filePath);
+
+      if (urlData?.publicUrl) {
+        setEditForm(prev => ({ ...prev, photoUrl: urlData.publicUrl }));
+        showToast('📸 Storefront photo uploaded successfully!');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error processing photo', 'error');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   React.useEffect(() => {

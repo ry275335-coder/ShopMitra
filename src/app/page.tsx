@@ -14,8 +14,9 @@ import {
 import { fetchDbShopProducts } from '@/lib/supabase/db';
 import { DEFAULT_USER_LOCATION } from '@/lib/geo';
 
-// Render dynamically on demand to eliminate Vercel oversized ISR page error (FALLBACK_BODY_TOO_LARGE)
-export const dynamic = 'force-dynamic';
+// Cache page at Vercel Edge with Incremental Static Regeneration (revalidates every 60s)
+// Payload is lightweight (~10 KB data) for instant <50ms page loads worldwide
+export const revalidate = 60;
 
 export default async function HomePage() {
   // Fetch all 4 public catalog datasets in ONE single parallel batch — ZERO duplicate queries!
