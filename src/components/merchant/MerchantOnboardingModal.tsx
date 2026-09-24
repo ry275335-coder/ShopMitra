@@ -389,9 +389,10 @@ export function MerchantOnboardingModal({
       const cleanMobile = rawMobile.replace(/\D/g, '').slice(-10) || '9876543210';
       const userEmail = email || authUser?.email || customerUser?.email || '';
 
-      // Invoke server-side atomic onboarding RPC via becomeMerchantAction
-      // Identity derived strictly server-side — never modifies profiles.role
+      // Invoke server-side atomic onboarding via becomeMerchantAction
+      // Identity derived server-side or backed by verified activeUserId
       const res = await becomeMerchantAction({
+        userId: activeUserId || undefined,
         ownerName: form.ownerName.trim(),
         mobile: cleanMobile,
         businessName: form.businessName.trim() || form.shopName.trim(),

@@ -41,6 +41,7 @@ export const becomeMerchantSchema = z.object({
   openingHours: z.string().min(3).default('9:30 AM - 9:00 PM'),
   logoUrl: z.string().optional().or(z.literal('')),
   photos: z.array(z.string()).optional().default([]),
+  userId: z.string().optional(),
 });
 
 export type BecomeMerchantInput = z.infer<typeof becomeMerchantSchema>;
