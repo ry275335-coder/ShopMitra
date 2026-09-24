@@ -14,9 +14,8 @@ import {
 import { fetchDbShopProducts } from '@/lib/supabase/db';
 import { DEFAULT_USER_LOCATION } from '@/lib/geo';
 
-// Cache page data with Incremental Static Regeneration (revalidate every 60s)
-// to prevent excessive Supabase network egress while keeping storefront prices fresh
-export const revalidate = 60;
+// Render dynamically on demand to eliminate Vercel oversized ISR page error (FALLBACK_BODY_TOO_LARGE)
+export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   // Fetch all 4 public catalog datasets in ONE single parallel batch — ZERO duplicate queries!
