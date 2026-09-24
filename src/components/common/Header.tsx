@@ -30,7 +30,7 @@ import { getStoredCounterHolds } from '@/lib/counterHolds';
 import { getStoredPriceAlerts } from '@/lib/notifications';
 import { MasterProduct } from '@/types';
 import { SearchSuggestionsDropdown } from '@/components/customer/SearchSuggestionsDropdown';
-import { fetchDbProducts, searchDbProducts } from '@/lib/supabase/db';
+import { searchDbProducts } from '@/lib/supabase/db';
 
 export function Header({
   products = [],
@@ -94,21 +94,7 @@ export function Header({
     }
   }, [products]);
 
-  // Always fetch full database products on mount to ensure fresh state
-  useEffect(() => {
-    let active = true;
-    fetchDbProducts().then(fresh => {
-      if (active && fresh && fresh.length > 0) {
-        setDbProducts(prev => {
-          const map = new Map<string, MasterProduct>();
-          prev.forEach(p => map.set(p.id, p));
-          fresh.forEach(p => map.set(p.id, p));
-          return Array.from(map.values());
-        });
-      }
-    }).catch(() => {});
-    return () => { active = false; };
-  }, []);
+
 
   // Debounced search directly in Supabase to fetch any matching products
   useEffect(() => {

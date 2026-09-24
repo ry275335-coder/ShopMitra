@@ -1,13 +1,16 @@
+import { cache } from 'react';
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { dbClient, fetchDbProducts } from '@/lib/supabase/db';
+import { dbClient } from '@/lib/supabase/db';
+
+export const revalidate = 300; // Cache product pages for 5 minutes
 
 interface ProductPageProps {
   params: { slug: string };
 }
 
-async function getProductBySlug(slug: string) {
+const getProductBySlug = cache(async (slug: string) => {
   try {
     const { data, error } = await dbClient
       .from('products')
@@ -31,27 +34,12 @@ async function getProductBySlug(slug: string) {
         categoryName: (data.categories as any)?.name || 'General',
       };
     }
-  } catch {}
-
-  // Fallback to in-memory catalogue
-  const allProds = await fetchDbProducts();
-  const found = allProds.find(p => p.slug === slug);
-  if (found) {
-    return {
-      id: found.id,
-      name: found.name,
-      slug: found.slug,
-      brand: found.brand,
-      model: found.model,
-      description: found.description,
-      mrp: found.mrp,
-      imageUrl: found.imageUrl,
-      categoryName: 'General',
-    };
+  } catch (err) {
+    console.warn('getProductBySlug error:', err);
   }
 
   return null;
-}
+});
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const product = await getProductBySlug(params.slug);

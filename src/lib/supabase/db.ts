@@ -52,8 +52,10 @@ export async function fetchDbProducts(): Promise<MasterProduct[]> {
   try {
     const { data, error } = await dbClient
       .from('products')
-      .select('id, category_id, subcategory_id, name, slug, brand, model, description, mrp, image_url, gallery_urls, specifications, is_active')
-      .order('name', { ascending: true });
+      .select('id, category_id, subcategory_id, name, slug, brand, model, mrp, image_url, is_active')
+      .eq('is_active', true)
+      .order('name', { ascending: true })
+      .limit(150);
 
     if (error || !data || data.length === 0) {
       return [];
@@ -67,11 +69,11 @@ export async function fetchDbProducts(): Promise<MasterProduct[]> {
       slug: p.slug || p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       brand: p.brand || '',
       model: p.model || undefined,
-      description: p.description || undefined,
+      description: undefined,
       mrp: Number(p.mrp) || 0,
       imageUrl: p.image_url || 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80',
-      galleryUrls: p.gallery_urls || [],
-      specifications: p.specifications || {},
+      galleryUrls: [],
+      specifications: {},
     }));
   } catch (err) {
     console.error('fetchDbProducts error:', err);
@@ -181,7 +183,8 @@ export async function fetchDbShops(): Promise<Shop[]> {
       .from('shops')
       .select('id, business_id, name, slug, phone, whatsapp, address, landmark, city, state, pincode, location, opening_hours, weekly_holidays, is_open, is_verified, verification_badge, photos, rating, review_count, is_active, created_at')
       .eq('is_active', true)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (error || !data) {
       return [];
@@ -308,8 +311,9 @@ export async function fetchDbCustomers(): Promise<CustomerUser[]> {
   try {
     const { data, error } = await dbClient
       .from('customers')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .select('id, profile_id, mobile, preferred_language, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (error || !data) {
       return [];
@@ -317,13 +321,13 @@ export async function fetchDbCustomers(): Promise<CustomerUser[]> {
 
     return data.map(c => ({
       id: c.id,
-      name: (c.name && c.name !== 'Shopper') ? c.name : (c.mobile || 'Customer'),
+      name: c.mobile || 'Customer',
       mobile: c.mobile || '',
-      email: c.email || undefined,
-      city: c.city || 'Delhi',
-      address: c.address || '',
-      lat: Number(c.lat) || undefined,
-      lng: Number(c.lng) || undefined,
+      email: undefined,
+      city: 'Delhi',
+      address: '',
+      lat: undefined,
+      lng: undefined,
       isLoggedIn: false,
     }));
   } catch (err) {
@@ -393,6 +397,7 @@ export async function fetchDbShopProducts(productId?: string, shopId?: string): 
       .eq('status', 'active');
     if (productId) query = query.eq('product_id', productId);
     if (shopId) query = query.eq('shop_id', shopId);
+    else query = query.limit(250);
 
     const { data, error } = await query;
     if (error || !data) return [];

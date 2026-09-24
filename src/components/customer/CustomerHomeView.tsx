@@ -275,15 +275,17 @@ export function CustomerHomeView({
     }
   }, [allShops, initialShops, initialProducts, userLocation]);
 
-  // Fetch live catalog on initial mount AND listen to inventory update events
+  // Listen to local merchant inventory update events (or load if initialProducts was empty)
   useEffect(() => {
-    loadLiveCatalog();
+    if (!initialProducts || initialProducts.length === 0) {
+      loadLiveCatalog();
+    }
     const handleInvUpdate = () => loadLiveCatalog();
     window.addEventListener('shopmitra:inventory_updated', handleInvUpdate);
     return () => {
       window.removeEventListener('shopmitra:inventory_updated', handleInvUpdate);
     };
-  }, [loadLiveCatalog]);
+  }, [loadLiveCatalog, initialProducts]);
 
   // React to mobile bottom bar navigation actions
   useEffect(() => {

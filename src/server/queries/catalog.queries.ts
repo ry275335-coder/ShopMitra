@@ -25,7 +25,8 @@ import {
   fetchDbProducts, 
   fetchDbShops, 
   fetchDbShopProducts, 
-  fetchDbCustomers 
+  fetchDbCustomers,
+  dbClient
 } from '@/lib/supabase/db';
 
 // Request-isolated catalog query helpers — NO shared process-level mutable state
@@ -80,7 +81,29 @@ export async function getShopBySlug(slug: string, userLocation?: UserLocation): 
 
   // Query live inventory for this shop directly from Supabase
   const dbInventory = await fetchDbShopProducts(undefined, shop.id);
-  const productsList = await getProducts();
+  const productIds = dbInventory.map(i => i.productId || i.product_id).filter(Boolean);
+  let productsList: MasterProduct[] = [];
+  if (productIds.length > 0) {
+    const { data: prods } = await dbClient
+      .from('products')
+      .select('id, category_id, subcategory_id, name, slug, brand, model, mrp, image_url, is_active')
+      .in('id', productIds);
+    if (prods) {
+      productsList = prods.map(p => ({
+        id: p.id,
+        categoryId: p.category_id || '',
+        name: p.name,
+        slug: p.slug || p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        brand: p.brand || '',
+        model: p.model || undefined,
+        description: undefined,
+        mrp: Number(p.mrp) || 0,
+        imageUrl: p.image_url || '',
+        galleryUrls: [],
+        specifications: {},
+      }));
+    }
+  }
   const products: ShopProductRate[] = [];
 
   for (const inv of dbInventory) {
@@ -351,22 +374,20 @@ export async function getAllProductRates(
 }
 
 export async function getAdminMetrics() {
-  const [customers, shops, products] = await Promise.all([
-    fetchDbCustomers(),
-    fetchDbShops(),
-    fetchDbProducts(),
+  const [custRes, shopRes, activeShopRes, prodRes] = await Promise.all([
+    dbClient.from('customers').select('*', { count: 'exact', head: true }),
+    dbClient.from('shops').select('*', { count: 'exact', head: true }),
+    dbClient.from('shops').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    dbClient.from('products').select('*', { count: 'exact', head: true }),
   ]);
 
-  const activeShops = shops.filter(s => s.isActive);
-  const pendingVerifications = shops.filter(s => !s.isVerified);
-
   return {
-    totalUsers: customers.length,
-    totalMerchants: shops.length,
-    activeShops: activeShops.length,
-    totalProducts: products.length,
+    totalUsers: custRes.count ?? 0,
+    totalMerchants: shopRes.count ?? 0,
+    activeShops: activeShopRes.count ?? 0,
+    totalProducts: prodRes.count ?? 0,
     dailySearches: 0,
-    pendingVerifications: pendingVerifications.length,
+    pendingVerifications: 0,
     openAnomalies: 0,
     openReports: 0,
   };

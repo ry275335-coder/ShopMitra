@@ -1,13 +1,16 @@
+import { cache } from 'react';
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { dbClient, fetchDbShops } from '@/lib/supabase/db';
+import { dbClient } from '@/lib/supabase/db';
+
+export const revalidate = 300; // Cache shop pages for 5 minutes
 
 interface ShopPageProps {
   params: { slug: string };
 }
 
-async function getShopBySlug(slug: string) {
+const getShopBySlug = cache(async (slug: string) => {
   try {
     const { data, error } = await dbClient
       .from('shops')
@@ -40,33 +43,12 @@ async function getShopBySlug(slug: string) {
         reviewCount: Number(data.review_count) || 0,
       };
     }
-  } catch {}
-
-  const allShops = await fetchDbShops();
-  const found = allShops.find(s => s.slug === slug);
-  if (found) {
-    return {
-      id: found.id,
-      name: found.name,
-      slug: found.slug,
-      phone: found.phone,
-      whatsapp: found.whatsapp,
-      address: found.address,
-      landmark: found.landmark,
-      city: found.city,
-      openingHours: found.openingHours,
-      isOpen: found.isOpen,
-      isVerified: found.isVerified,
-      verificationBadge: found.verificationBadge,
-      logoUrl: undefined,
-      photos: found.photos || [],
-      rating: found.rating,
-      reviewCount: found.reviewCount,
-    };
+  } catch (err) {
+    console.warn('getShopBySlug error:', err);
   }
 
   return null;
-}
+});
 
 export async function generateMetadata({ params }: ShopPageProps): Promise<Metadata> {
   const shop = await getShopBySlug(params.slug);
