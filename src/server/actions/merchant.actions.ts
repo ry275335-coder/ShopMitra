@@ -825,7 +825,7 @@ export async function updateProductDetailsAction(input: {
 }
 
 /**
- * Permanently delete a merchant shop and its associated inventory
+ * Permanently delete a merchant shop and all associated products and inventory simultaneously
  */
 export async function merchantDeleteShopAction(
   shopId: string
@@ -843,15 +843,45 @@ export async function merchantDeleteShopAction(
 
     const adminDb = createAdminSupabase();
 
-    // 1. Delete associated shop products
+    // 1. Identify all products linked to this store before deleting shop_products
+    const { data: linkedShopProducts } = await adminDb
+      .from('shop_products')
+      .select('product_id')
+      .eq('shop_id', shopId);
+
+    const productIds: string[] = Array.from(
+      new Set((linkedShopProducts || []).map((sp: any) => sp.product_id).filter(Boolean))
+    );
+
+    // 2. Delete all shop_products associated with this store
     await adminDb.from('shop_products').delete().eq('shop_id', shopId);
 
-    // 2. Delete shop hours if existing
-    try {
-      await adminDb.from('shop_hours').delete().eq('shop_id', shopId);
-    } catch {}
+    // 3. Delete products of this store that are not sold by any other store (orphan products)
+    for (const pid of productIds) {
+      try {
+        const { count } = await adminDb
+          .from('shop_products')
+          .select('id', { count: 'exact', head: true })
+          .eq('product_id', pid);
 
-    // 3. Mark inactive and attempt delete
+        // If no other shop in the platform has this product, delete it completely
+        if (!count || count === 0) {
+          try { await adminDb.from('price_alerts').delete().eq('product_id', pid); } catch {}
+          try { await adminDb.from('reviews').delete().eq('product_id', pid); } catch {}
+          try { await adminDb.from('product_variants').delete().eq('product_id', pid); } catch {}
+          await adminDb.from('products').delete().eq('id', pid);
+        }
+      } catch (prodCleanupErr) {
+        console.warn(`Product cleanup note for product ${pid}:`, prodCleanupErr);
+      }
+    }
+
+    // 4. Delete reviews, enquiries, and shop hours associated with this store
+    try { await adminDb.from('reviews').delete().eq('shop_id', shopId); } catch {}
+    try { await adminDb.from('enquiries').delete().eq('shop_id', shopId); } catch {}
+    try { await adminDb.from('shop_hours').delete().eq('shop_id', shopId); } catch {}
+
+    // 5. Mark inactive and permanently delete from shops table
     await adminDb.from('shops').update({ is_active: false }).eq('id', shopId);
     const { error: delErr } = await adminDb.from('shops').delete().eq('id', shopId);
 

@@ -1133,7 +1133,7 @@ export function MerchantDashboardView({
                 Delete "{activeShop.name}"?
               </h3>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                This will permanently remove this store, its address, and all associated product prices. This action cannot be undone.
+                This will permanently remove this store, its address, its inventory, and all products belonging exclusively to this store. This action cannot be undone.
               </p>
             </div>
             <div className="flex items-center justify-center gap-3 pt-2">

@@ -636,7 +636,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       }
       return prev;
     });
-    showToast('🗑️ Store deleted permanently', 'info');
+    showToast('🗑️ Store & its products deleted permanently', 'info');
   };
 
   const allShops = useMemo(() => {
