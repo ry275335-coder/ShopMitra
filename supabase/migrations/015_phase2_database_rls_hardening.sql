@@ -82,7 +82,7 @@ BEGIN
         SELECT 1 FROM public.profiles 
         WHERE id = current_uid 
           AND role IN ('super_admin', 'admin', 'moderator')
-          AND (status = 'active' OR (status IS NULL AND is_active = true))
+          AND is_active = true
     );
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -113,7 +113,7 @@ SET search_path = public, pg_temp;
 CREATE OR REPLACE FUNCTION public.prevent_profile_role_tampering()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF (OLD.role IS DISTINCT FROM NEW.role) OR (OLD.status IS DISTINCT FROM NEW.status) THEN
+  IF (OLD.role IS DISTINCT FROM NEW.role) OR (OLD.is_active IS DISTINCT FROM NEW.is_active) THEN
     IF auth.uid() IS NOT NULL THEN
       IF NOT (public.is_admin_user() OR public.is_admin()) THEN
         RAISE EXCEPTION 'Security Exception: Unauthorized attempt to alter user role or status.';
@@ -390,7 +390,10 @@ DROP POLICY IF EXISTS "Shop branches select active or owner or admin" ON public.
 CREATE POLICY "Shop branches select active or owner or admin"
   ON public.shop_branches FOR SELECT
   USING (
-    is_active = true 
+    EXISTS (
+      SELECT 1 FROM public.shops s 
+      WHERE s.id = shop_branches.shop_id AND (s.is_active = true OR public.owns_shop(s.id))
+    )
     OR public.owns_shop(shop_id) 
     OR public.is_admin_user() 
     OR public.is_admin()
