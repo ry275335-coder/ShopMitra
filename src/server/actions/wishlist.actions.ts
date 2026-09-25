@@ -7,16 +7,17 @@
 
 'use server';
 
-import { dbClient } from '@/lib/supabase/db';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getAuthenticatedUser, createServerSupabase, createAdminSupabase } from '@/lib/supabase/server';
 
 /**
  * Resolves or initializes the customer record and default wishlist for authenticated user.
  */
 async function resolveCustomerWishlist(userId: string): Promise<{ wishlistId?: string; error?: string }> {
   try {
+    const supabase = await createServerSupabase();
+
     // 1. Resolve customer record
-    let { data: customer, error: custErr } = await dbClient
+    let { data: customer, error: custErr } = await supabase
       .from('customers')
       .select('id')
       .eq('profile_id', userId)
@@ -28,20 +29,36 @@ async function resolveCustomerWishlist(userId: string): Promise<{ wishlistId?: s
 
     let customerId = customer?.id;
     if (!customerId) {
-      const { data: newCust, error: createCustErr } = await dbClient
+      const { data: newCust, error: createCustErr } = await supabase
         .from('customers')
         .insert([{ profile_id: userId, preferred_language: 'en' }])
         .select('id')
         .single();
 
       if (createCustErr || !newCust?.id) {
-        return { error: createCustErr?.message || 'Failed to initialize customer account' };
+        // Admin fallback if available
+        try {
+          const admin = createAdminSupabase();
+          const { data: adminCust } = await admin
+            .from('customers')
+            .upsert([{ profile_id: userId, preferred_language: 'en' }], { onConflict: 'profile_id' })
+            .select('id')
+            .single();
+          if (adminCust?.id) {
+            customerId = adminCust.id;
+          }
+        } catch {}
+
+        if (!customerId) {
+          return { error: createCustErr?.message || 'Failed to initialize customer account' };
+        }
+      } else {
+        customerId = newCust.id;
       }
-      customerId = newCust.id;
     }
 
     // 2. Resolve default wishlist for this customer
-    const { data: existingWishlist, error: wlErr } = await dbClient
+    const { data: existingWishlist, error: wlErr } = await supabase
       .from('wishlists')
       .select('id')
       .eq('customer_id', customerId)
@@ -56,7 +73,7 @@ async function resolveCustomerWishlist(userId: string): Promise<{ wishlistId?: s
     }
 
     // Create default wishlist for this customer
-    const { data: newWishlist, error: createWlErr } = await dbClient
+    const { data: newWishlist, error: createWlErr } = await supabase
       .from('wishlists')
       .insert([{ customer_id: customerId, name: 'My Saved Items' }])
       .select('id')
@@ -87,7 +104,8 @@ export async function getWishlistAction(): Promise<{ success: boolean; items: st
       return { success: false, items: [], error };
     }
 
-    const { data, error: itemsErr } = await dbClient
+    const supabase = await createServerSupabase();
+    const { data, error: itemsErr } = await supabase
       .from('wishlist_items')
       .select('product_id')
       .eq('wishlist_id', wishlistId);
@@ -128,8 +146,10 @@ export async function toggleWishlistAction(
       return { success: false, error };
     }
 
+    const supabase = await createServerSupabase();
+
     // Check if product is already in the customer's wishlist
-    const { data: existing, error: findErr } = await dbClient
+    const { data: existing, error: findErr } = await supabase
       .from('wishlist_items')
       .select('id')
       .eq('wishlist_id', wishlistId)
@@ -142,7 +162,7 @@ export async function toggleWishlistAction(
 
     if (existing?.id) {
       // Remove item
-      const { error: delErr } = await dbClient
+      const { error: delErr } = await supabase
         .from('wishlist_items')
         .delete()
         .eq('id', existing.id);
@@ -154,7 +174,7 @@ export async function toggleWishlistAction(
       return { success: true, action: 'removed' };
     } else {
       // Add item
-      const { error: insErr } = await dbClient
+      const { error: insErr } = await supabase
         .from('wishlist_items')
         .insert([{
           wishlist_id: wishlistId,

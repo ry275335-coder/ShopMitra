@@ -8,7 +8,7 @@
 'use server';
 
 import { dbClient } from '@/lib/supabase/db';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getAuthenticatedUser, createServerSupabase, createAdminSupabase } from '@/lib/supabase/server';
 import { z } from 'zod';
 
 const submitReviewSchema = z.object({
@@ -36,9 +36,11 @@ export async function submitReviewAction(input: SubmitReviewInput) {
     return { success: false, error: 'Authentication required. Please sign in to submit a review.' };
   }
 
+  const supabase = await createServerSupabase();
+
   // 2. Resolve customers.id from authenticated user.id (profiles.id)
   let customerId: string | null = null;
-  const { data: customer, error: custErr } = await dbClient
+  const { data: customer, error: custErr } = await supabase
     .from('customers')
     .select('id')
     .eq('profile_id', user.id)
@@ -52,19 +54,35 @@ export async function submitReviewAction(input: SubmitReviewInput) {
     customerId = customer.id;
   } else {
     // Auto-create customer record if it doesn't exist yet
-    const { data: createdCust, error: createCustErr } = await dbClient
+    const { data: createdCust, error: createCustErr } = await supabase
       .from('customers')
       .insert([{ profile_id: user.id, preferred_language: 'en' }])
       .select('id')
       .single();
 
     if (createCustErr || !createdCust?.id) {
-      return { 
-        success: false, 
-        error: `Failed to resolve customer record: ${createCustErr?.message || 'Unknown database error'}` 
-      };
+      // Admin fallback if service role is available
+      try {
+        const admin = createAdminSupabase();
+        const { data: adminCust } = await admin
+          .from('customers')
+          .upsert([{ profile_id: user.id, preferred_language: 'en' }], { onConflict: 'profile_id' })
+          .select('id')
+          .single();
+        if (adminCust?.id) {
+          customerId = adminCust.id;
+        }
+      } catch {}
+
+      if (!customerId) {
+        return { 
+          success: false, 
+          error: `Failed to resolve customer record: ${createCustErr?.message || 'Unknown database error'}` 
+        };
+      }
+    } else {
+      customerId = createdCust.id;
     }
-    customerId = createdCust.id;
   }
 
   // 3. Persist review into Supabase reviews table
@@ -79,7 +97,7 @@ export async function submitReviewAction(input: SubmitReviewInput) {
     status: 'resolved' as const, // 'resolved' makes it visible under RLS policy
   };
 
-  const { data, error } = await dbClient
+  const { data, error } = await supabase
     .from('reviews')
     .insert([insertPayload])
     .select()

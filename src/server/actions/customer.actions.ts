@@ -16,7 +16,7 @@ import {
   ReportCreateInput
 } from '@/lib/validations';
 import { insertDbCustomer, dbClient } from '@/lib/supabase/db';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getAuthenticatedUser, createServerSupabase, createAdminSupabase } from '@/lib/supabase/server';
 import { CustomerUser } from '@/types';
 
 /**
@@ -25,7 +25,8 @@ import { CustomerUser } from '@/types';
  */
 async function resolveCustomerId(profileId: string): Promise<{ customerId?: string; error?: string }> {
   try {
-    const { data: existing, error: selectErr } = await dbClient
+    const supabase = await createServerSupabase();
+    const { data: existing, error: selectErr } = await supabase
       .from('customers')
       .select('id')
       .eq('profile_id', profileId)
@@ -40,13 +41,25 @@ async function resolveCustomerId(profileId: string): Promise<{ customerId?: stri
     }
 
     // Customer record does not exist yet; auto-initialize customer record linked to profile_id
-    const { data: created, error: insertErr } = await dbClient
+    const { data: created, error: insertErr } = await supabase
       .from('customers')
       .insert([{ profile_id: profileId, preferred_language: 'en' }])
       .select('id')
       .single();
 
     if (insertErr || !created?.id) {
+      // Admin fallback if service role key is present
+      try {
+        const admin = createAdminSupabase();
+        const { data: adminCreated } = await admin
+          .from('customers')
+          .upsert([{ profile_id: profileId, preferred_language: 'en' }], { onConflict: 'profile_id' })
+          .select('id')
+          .single();
+        if (adminCreated?.id) {
+          return { customerId: adminCreated.id };
+        }
+      } catch {}
       return { error: insertErr?.message || 'Failed to initialize customer record' };
     }
 
@@ -121,7 +134,8 @@ export async function createEnquiryAction(input: EnquiryCreateInput) {
   // Only insert columns that actually exist in the enquiries table:
   // (customer_id, shop_id, product_id, message, status)
   // customerName and customerPhone are NOT columns in enquiries table
-  const { data, error } = await dbClient
+  const supabase = await createServerSupabase();
+  const { data, error } = await supabase
     .from('enquiries')
     .insert([
       {
@@ -173,7 +187,8 @@ export async function createPriceAlertAction(input: PriceAlertCreateInput) {
   const locationWkt = `POINT(${lng} ${lat})`;
 
   // Note: Schema column is 'is_active', NOT 'status'
-  const { data, error } = await dbClient
+  const supabase = await createServerSupabase();
+  const { data, error } = await supabase
     .from('price_alerts')
     .insert([
       {
@@ -210,7 +225,8 @@ export async function submitReportAction(input: ReportCreateInput) {
     return { success: false, error: 'You must be signed in to submit a verification report.' };
   }
 
-  const { error } = await dbClient.from('reports').insert([
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('reports').insert([
     {
       reporter_id: user.id,
       shop_id: input.shopId,
