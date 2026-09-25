@@ -15,8 +15,11 @@ import {
   Tag,
   CheckCircle2,
   SlidersHorizontal,
-  Sparkles
+  Sparkles,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
+import { deleteProductAction } from '@/server/actions/admin.actions';
 import { formatCurrency } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import { Modal } from '@/components/ui/Modal';
@@ -31,6 +34,8 @@ export default function AdminProductsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<MasterProduct | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -84,6 +89,26 @@ export default function AdminProductsPage() {
   };
 
   const detectedDuplicates = findDuplicates();
+
+  const handleDeleteProduct = async () => {
+    if (!deleteTarget) return;
+    setActionLoadingId(deleteTarget.id);
+    try {
+      const res = await deleteProductAction(deleteTarget.id);
+      if (res.success) {
+        showToast(`Product "${deleteTarget.name}" deleted permanently`, 'success');
+        setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+        setDeleteTarget(null);
+        await refreshData(true);
+      } else {
+        showToast(res.error || 'Failed to delete product', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error deleting product', 'error');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -179,6 +204,7 @@ export default function AdminProductsPage() {
                   <th className="px-5 py-3.5">Barcode / GTIN</th>
                   <th className="px-5 py-3.5">Catalog MRP</th>
                   <th className="px-5 py-3.5">Status</th>
+                  <th className="px-5 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
@@ -223,6 +249,16 @@ export default function AdminProductsPage() {
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         Active
                       </span>
+                    </td>
+
+                    <td className="px-5 py-3.5 text-right">
+                      <button
+                        onClick={() => setDeleteTarget(prod)}
+                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-colors"
+                        title="Permanently remove product from master catalog"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -271,6 +307,35 @@ export default function AdminProductsPage() {
           <div className="flex justify-end pt-2">
             <Button variant="outline" size="sm" onClick={() => setShowDuplicateModal(false)}>
               Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Product Modal */}
+      <Modal
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title={`Permanently Delete Product: ${deleteTarget?.name}`}
+      >
+        <div className="space-y-4 pt-2">
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs leading-relaxed">
+            <AlertTriangle className="w-4 h-4 inline mr-1 text-rose-400" />
+            Warning: This action will permanently remove this master product from the catalog, including all live merchant inventory rates and price comparison listings across the platform.
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleDeleteProduct}
+              isLoading={actionLoadingId !== null}
+              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+            >
+              Delete Product Permanently
             </Button>
           </div>
         </div>

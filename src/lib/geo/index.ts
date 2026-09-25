@@ -9,12 +9,13 @@ export const DEFAULT_USER_LOCATION: UserLocation = {
   lat: 28.6289,
   lng: 77.2155,
   name: 'Connaught Place, Central Market',
-  radiusKm: 5,
+  radiusKm: 15,
 };
 
 export const POPULAR_MARKET_PRESETS = [
   // Lucknow & Uttar Pradesh
   { name: 'Hazratganj Central Market, Lucknow', city: 'Lucknow', lat: 26.8467, lng: 80.9462 },
+  { name: 'Jankipuram / Sitapur Road, Lucknow', city: 'Lucknow', lat: 26.9155, lng: 80.9429 },
   { name: 'Naka Hindola IT Hub, Lucknow', city: 'Lucknow', lat: 26.8373, lng: 80.9165 },
   { name: 'Aminabad Retail Bazaar, Lucknow', city: 'Lucknow', lat: 26.8441, lng: 80.9248 },
   { name: 'Gomti Nagar Commercial Hub, Lucknow', city: 'Lucknow', lat: 26.8530, lng: 80.9984 },
@@ -182,10 +183,21 @@ export function parsePostGisPoint(location: any): { lat: number; lng: number } {
     // 2. EWKB hex format e.g. 0101000020E6100000<8-byte lng><8-byte lat>
     if (/^[0-9A-Fa-f]{42,}$/.test(location)) {
       try {
-        const hex = location;
+        const hex = location.trim();
         const isLittleEndian = hex.substring(0, 2) === '01';
-        const flagByte = parseInt(hex.substring(2, 4), 16);
-        const hasSrid = (flagByte & 0x20) !== 0;
+        let hasSrid = false;
+        if (isLittleEndian) {
+          // In little-endian uint32, highest order byte (containing 0x20000000 SRID flag) is byte 4 (chars 8-10)
+          const byte4 = parseInt(hex.substring(8, 10), 16);
+          hasSrid = (byte4 & 0x20) !== 0;
+        } else {
+          // In big-endian uint32, highest order byte is byte 1 (chars 2-4)
+          const byte1 = parseInt(hex.substring(2, 4), 16);
+          hasSrid = (byte1 & 0x20) !== 0;
+        }
+
+        // Header: 1 byte endian + 4 bytes type + (4 bytes SRID if present)
+        // 9 bytes = 18 hex chars if SRID present, 5 bytes = 10 hex chars if no SRID
         const coordOffset = hasSrid ? 18 : 10;
 
         const xHex = hex.substring(coordOffset, coordOffset + 16);

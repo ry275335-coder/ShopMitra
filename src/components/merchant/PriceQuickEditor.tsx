@@ -7,7 +7,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '@/components/common/AppContext';
-import { updateProductPriceAction } from '@/server/actions/merchant.actions';
+import { updateProductPriceAction, deleteShopProductAction } from '@/server/actions/merchant.actions';
 import { MasterProduct, StockStatus } from '@/types';
 import { fetchDbProducts, fetchDbShopProducts } from '@/lib/supabase/db';
 import { 
@@ -21,9 +21,13 @@ import {
   RefreshCw,
   PlusCircle,
   PackagePlus,
-  Plus
+  Plus,
+  Pencil,
+  Trash2,
+  X
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { ProductEditModal, EditableProduct } from './ProductEditModal';
 
 export function PriceQuickEditor() {
   const { activeMerchantShopId } = useApp();
@@ -38,6 +42,36 @@ export function PriceQuickEditor() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [addingCatalogId, setAddingCatalogId] = useState<string | null>(null);
+  const [editingProduct, setEditingProduct] = useState<EditableProduct | null>(null);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<{ productId: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const confirmDeleteProduct = async () => {
+    if (!deleteConfirmItem || !activeMerchantShopId) return;
+    setIsDeleting(true);
+    try {
+      const res = await deleteShopProductAction(activeMerchantShopId, deleteConfirmItem.productId);
+      if (res.success) {
+        try {
+          const key = 'shopmitra_shop_inventory_' + activeMerchantShopId;
+          const existing = JSON.parse(localStorage.getItem(key) || '[]');
+          const filtered = existing.filter((i: any) => (i.product_id || i.productId) !== deleteConfirmItem.productId);
+          localStorage.setItem(key, JSON.stringify(filtered));
+        } catch {}
+
+        showToast(`🗑️ "${deleteConfirmItem.name}" deleted from your store inventory!`);
+        await loadData();
+        window.dispatchEvent(new CustomEvent('shopmitra:inventory_updated', { detail: { shopId: activeMerchantShopId } }));
+        setDeleteConfirmItem(null);
+      } else {
+        showToast(res.error || 'Failed to delete product', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error deleting product', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const loadData = React.useCallback(async () => {
     setIsRefreshing(true);
@@ -539,27 +573,60 @@ export function PriceQuickEditor() {
                         </span>
                       </td>
 
-                      {/* Action Save Button */}
+                      {/* Action Suite: Edit, Save/Live, Delete */}
                       <td className="py-3 px-4 text-right">
-                        {isDirty ? (
+                        <div className="flex items-center justify-end space-x-1.5">
+                          {/* Edit Product Button */}
                           <button
-                            onClick={() => handleSaveItem(item)}
-                            disabled={isSaving}
-                            className="bg-merchant-600 hover:bg-merchant-700 text-white text-xs font-black px-3.5 py-1.5 rounded-xl flex items-center space-x-1 ml-auto shadow-sm transition-all"
+                            type="button"
+                            onClick={() => setEditingProduct({
+                              productId: item.productId,
+                              name: item.name,
+                              brand: item.brand,
+                              mrp: item.mrp,
+                              currentPrice: item.currentPrice,
+                              stockStatus: item.stockStatus,
+                              stockCount: item.stockCount,
+                              imageUrl: item.imageUrl,
+                            })}
+                            className="p-1.5 text-slate-500 hover:text-merchant-600 hover:bg-merchant-50 rounded-xl transition-all border border-slate-200/80 hover:border-merchant-200"
+                            title="Edit product details & photo"
                           >
-                            {isSaving ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Save className="w-3.5 h-3.5" />
-                            )}
-                            <span>Save</span>
+                            <Pencil className="w-3.5 h-3.5" />
                           </button>
-                        ) : (
-                          <span className="text-[11px] text-emerald-700 font-bold inline-flex items-center space-x-1">
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Live</span>
-                          </span>
-                        )}
+
+                          {/* Save Changes Button if dirty, or Live badge */}
+                          {isDirty ? (
+                            <button
+                              onClick={() => handleSaveItem(item)}
+                              disabled={isSaving}
+                              className="bg-merchant-600 hover:bg-merchant-700 text-white text-xs font-black px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow-xs transition-all active:scale-95"
+                              title="Save new rate"
+                            >
+                              {isSaving ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Save className="w-3.5 h-3.5" />
+                              )}
+                              <span>Save</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-1 rounded-xl font-bold inline-flex items-center space-x-1">
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span>Live</span>
+                            </span>
+                          )}
+
+                          {/* Delete Product Button */}
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmItem({ productId: item.productId, name: item.name })}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-200"
+                            title="Delete item from store inventory"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -567,6 +634,54 @@ export function PriceQuickEditor() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* Product Edit Modal */}
+      {editingProduct && (
+        <ProductEditModal
+          isOpen={Boolean(editingProduct)}
+          onClose={() => setEditingProduct(null)}
+          product={editingProduct}
+          shopId={activeMerchantShopId}
+          onSuccess={loadData}
+        />
+      )}
+
+      {/* Delete Product Confirmation Modal */}
+      {deleteConfirmItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900">
+                Delete "{deleteConfirmItem.name}"?
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Are you sure you want to remove this product from your shop inventory? Customers will no longer find this item at your store.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmItem(null)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors w-full"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteProduct}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/20 transition-all flex items-center justify-center gap-1.5 w-full active:scale-95 disabled:opacity-50"
+              >
+                {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>Delete</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

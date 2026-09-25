@@ -40,7 +40,9 @@ import {
   Navigation, 
   ShieldCheck,
   ArrowRight,
-  User
+  User,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { parseSmartSearchQuery } from '@/lib/search/smartSearch';
 import { calculateDistance, getDirectionsUrl } from '@/lib/geo';
@@ -84,6 +86,7 @@ export function CustomerHomeView({
     switchPortal,
     hasCustomerAccount,
     hasMerchantAccount,
+    registeredShops,
   } = useApp();
 
   // Dynamic live catalog state: updates whenever merchants add/update products
@@ -95,6 +98,23 @@ export function CustomerHomeView({
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'price' | 'distance' | 'freshness'>('price');
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [storeFilterMode, setStoreFilterMode] = useState<'all' | 'nearby'>('all');
+
+  // Pagination States (4 products and 4 shops per page)
+  const [productPage, setProductPage] = useState<number>(1);
+  const [shopPage, setShopPage] = useState<number>(1);
+  const PRODUCTS_PER_PAGE = 4;
+  const SHOPS_PER_PAGE = 4;
+
+  // Reset product page when filters change
+  useEffect(() => {
+    setProductPage(1);
+  }, [selectedCategory, searchQuery, inStockOnly, searchRadiusKm, sortBy]);
+
+  // Reset shop page when filters change
+  useEffect(() => {
+    setShopPage(1);
+  }, [storeFilterMode, searchRadiusKm, searchQuery, userLocation]);
 
   // Modal States
   const [activeProduct, setActiveProduct] = useState<MasterProduct | null>(null);
@@ -349,37 +369,48 @@ export function CustomerHomeView({
     return new Set(matchingShopEntries.map(s => s.id));
   }, [matchingShopEntries]);
 
-  // Dynamically calculate accurate nearby shops relative to active userLocation
-  const nearbyShops = useMemo(() => {
+  // Candidate list of all registered shops with accurate distance relative to active userLocation
+  const allCandidateShops = useMemo(() => {
     const candidateList = (allShops && allShops.length > 0) ? allShops : initialShops;
-    const list = candidateList.map(shop => ({
+    return candidateList.map(shop => ({
       ...shop,
       distanceKm: calculateDistance(userLocation.lat, userLocation.lng, shop.lat, shop.lng)
-    }));
+    })).sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+  }, [allShops, initialShops, userLocation]);
 
-    // Filter within radius
-    let withinRadius = list
-      .filter(shop => (shop.distanceKm || 0) <= searchRadiusKm);
+  // Shops strictly within active search radius
+  const shopsWithinRadius = useMemo(() => {
+    return allCandidateShops.filter(shop => (shop.distanceKm || 0) <= searchRadiusKm);
+  }, [allCandidateShops, searchRadiusKm]);
 
-    if (withinRadius.length === 0) {
-      withinRadius = list.slice(0, 4);
-    }
-
-    // If a search query is active, filter/prioritize matching shops
+  // Dynamically calculate accurate nearby shops relative to active userLocation and view filters
+  const nearbyShops = useMemo(() => {
+    // If a search query is active, search across ALL registered shops
     if (cleanKeyword) {
-      const matching = withinRadius.filter(s =>
+      const matching = allCandidateShops.filter(s =>
         s.name.toLowerCase().includes(cleanKeyword) ||
         (s.city && s.city.toLowerCase().includes(cleanKeyword)) ||
         (s.address && s.address.toLowerCase().includes(cleanKeyword)) ||
         (s.landmark && s.landmark.toLowerCase().includes(cleanKeyword))
       );
       if (matching.length > 0) {
-        return matching.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+        return matching;
       }
     }
 
-    return withinRadius.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
-  }, [allShops, initialShops, userLocation, searchRadiusKm, cleanKeyword]);
+    if (storeFilterMode === 'nearby') {
+      if (shopsWithinRadius.length > 0) {
+        return shopsWithinRadius;
+      }
+      // If none strictly within radius, show city or all stores
+      const currentCity = (userLocation.name || '').toLowerCase();
+      const sameCityShops = allCandidateShops.filter(s => s.city && currentCity.includes(s.city.toLowerCase()));
+      return sameCityShops.length > 0 ? sameCityShops : allCandidateShops;
+    }
+
+    // Default 'all': Display all registered stores in order of proximity
+    return allCandidateShops;
+  }, [allCandidateShops, shopsWithinRadius, storeFilterMode, cleanKeyword, userLocation.name]);
 
   // Dynamically calculate accurate distance for each shop rate relative to active userLocation
   const currentRates = useMemo(() => {
@@ -488,6 +519,22 @@ export function CustomerHomeView({
     });
   }, [products, selectedCategory, cleanKeyword, currentRates, inStockOnly, searchRadiusKm, sortBy, parsedSearch.maxPrice, matchingShopIds, categories]);
 
+  // Multi-Store Rate Comparisons Pagination (4 products per page)
+  const totalProductPages = Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE) || 1;
+  const safeProductPage = Math.min(Math.max(productPage, 1), totalProductPages);
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (safeProductPage - 1) * PRODUCTS_PER_PAGE;
+    return filteredProducts.slice(startIndex, startIndex + PRODUCTS_PER_PAGE);
+  }, [filteredProducts, safeProductPage]);
+
+  // Physical Retailers Nearby Pagination (4 shops per page)
+  const totalShopPages = Math.ceil(nearbyShops.length / SHOPS_PER_PAGE) || 1;
+  const safeShopPage = Math.min(Math.max(shopPage, 1), totalShopPages);
+  const paginatedShops = useMemo(() => {
+    const startIndex = (safeShopPage - 1) * SHOPS_PER_PAGE;
+    return nearbyShops.slice(startIndex, startIndex + SHOPS_PER_PAGE);
+  }, [nearbyShops, safeShopPage]);
+
   // Track real-time search queries for matching shops
   useEffect(() => {
     const q = searchQuery.trim();
@@ -555,7 +602,15 @@ export function CustomerHomeView({
               </button>
             )}
 
-            {onOpenOnboarding && (
+            {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? (
+              <button
+                onClick={() => switchPortal('merchant')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg shadow-emerald-950/30 transition-all active:scale-95 border border-emerald-400 shrink-0"
+              >
+                <Store className="w-3.5 h-3.5" />
+                <span>🏪 Merchant Dashboard</span>
+              </button>
+            ) : onOpenOnboarding ? (
               <button
                 onClick={onOpenOnboarding}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-lg shadow-amber-950/30 transition-all active:scale-95 border border-amber-300 shrink-0"
@@ -563,7 +618,7 @@ export function CustomerHomeView({
                 <Store className="w-3.5 h-3.5" />
                 <span>🏪 अपनी दुकान लिस्ट करें / List Your Shop</span>
               </button>
-            )}
+            ) : null}
 
             <button
               onClick={() => {
@@ -671,7 +726,7 @@ export function CustomerHomeView({
           {/* Option 2: MERCHANT */}
           <div
             onClick={() => {
-              if (hasMerchantAccount) {
+              if (hasMerchantAccount || (registeredShops && registeredShops.length > 0)) {
                 switchPortal('merchant');
               } else if (authUser) {
                 if (onOpenOnboarding) onOpenOnboarding();
@@ -699,7 +754,7 @@ export function CustomerHomeView({
                     </h3>
                   </div>
                 </div>
-                {hasMerchantAccount ? (
+                {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? (
                   <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 rounded-xl flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Store Connected</span>
@@ -718,13 +773,13 @@ export function CustomerHomeView({
 
             <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                {hasMerchantAccount ? 'Merchant Account Active' : 'Phone / Email OTP • Instant Setup'}
+                {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? 'Merchant Account Active' : 'Phone / Email OTP • Instant Setup'}
               </span>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (hasMerchantAccount) {
+                  if (hasMerchantAccount || (registeredShops && registeredShops.length > 0)) {
                     switchPortal('merchant');
                   } else if (authUser) {
                     if (onOpenOnboarding) onOpenOnboarding();
@@ -734,7 +789,7 @@ export function CustomerHomeView({
                 }}
                 className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-4 py-2 rounded-xl shadow-sm group-hover:shadow transition-all"
               >
-                <span>{hasMerchantAccount ? 'Open Merchant Dashboard' : 'Continue as Merchant'}</span>
+                <span>{(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? 'Open Merchant Dashboard' : 'Continue as Merchant'}</span>
                 <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>
@@ -780,7 +835,7 @@ export function CustomerHomeView({
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-bold text-slate-500">Radius:</span>
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-xs font-semibold">
-              {[1, 3, 5, 10, 25].map((km) => (
+              {[3, 5, 10, 15, 25, 50].map((km) => (
                 <button
                   key={km}
                   onClick={() => setSearchRadiusKm(km)}
@@ -989,6 +1044,11 @@ export function CustomerHomeView({
                 <span>Multi-Store Rate Comparisons</span>
                 <Badge variant="primary" size="sm">{filteredProducts.length} Items</Badge>
               </h2>
+              {totalProductPages > 1 && (
+                <span className="text-xs text-slate-500 font-semibold">
+                  Page {safeProductPage} of {totalProductPages}
+                </span>
+              )}
             </div>
 
             {filteredProducts.length === 0 ? (
@@ -1027,7 +1087,7 @@ export function CustomerHomeView({
               </div>
             ) : (
               <div className="space-y-4">
-                {filteredProducts.map((product) => {
+                {paginatedProducts.map((product) => {
                   const productRates = (currentRates[product.id] || [])
                     .filter(r => (r.distanceKm || 0) <= searchRadiusKm)
                     .sort((a, b) => {
@@ -1051,13 +1111,67 @@ export function CustomerHomeView({
                     />
                   );
                 })}
+
+                {/* Product Pagination Controls */}
+                {totalProductPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-xs text-slate-500 font-medium order-2 sm:order-1">
+                      Showing <strong className="text-slate-900 dark:text-white">{(safeProductPage - 1) * PRODUCTS_PER_PAGE + 1}</strong> to <strong className="text-slate-900 dark:text-white">{Math.min(safeProductPage * PRODUCTS_PER_PAGE, filteredProducts.length)}</strong> of <strong className="text-slate-900 dark:text-white">{filteredProducts.length}</strong> products
+                    </div>
+
+                    <div className="flex items-center gap-1.5 order-1 sm:order-2">
+                      <button
+                        onClick={() => {
+                          setProductPage(prev => Math.max(1, prev - 1));
+                          document.getElementById('customer-rates-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        disabled={safeProductPage === 1}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 shadow-xs"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Prev</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalProductPages }, (_, i) => i + 1).map((pageNum) => (
+                          <button
+                            key={pageNum}
+                            onClick={() => {
+                              setProductPage(pageNum);
+                              document.getElementById('customer-rates-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                            className={`w-8 h-8 rounded-xl text-xs font-black transition-all flex items-center justify-center ${
+                              safeProductPage === pageNum
+                                ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setProductPage(prev => Math.min(totalProductPages, prev + 1));
+                          document.getElementById('customer-rates-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        disabled={safeProductPage === totalProductPages}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 shadow-xs"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>
 
           {/* Nearby Stores Directory Section */}
-          <section className="space-y-4 pt-6 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between">
+          <section id="customer-shops-section" className="space-y-4 pt-6 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   <Store className="w-5 h-5 text-emerald-600" />
@@ -1067,27 +1181,129 @@ export function CustomerHomeView({
                   Walk in, inspect items before paying, or order direct over WhatsApp.
                 </p>
               </div>
-              <Badge variant="neutral" size="sm">{nearbyShops.length} Stores in {searchRadiusKm} km</Badge>
+
+              {/* View Switcher: All Stores vs Within Radius */}
+              <div className="flex items-center gap-1.5 self-start sm:self-auto bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs font-semibold">
+                <button
+                  onClick={() => setStoreFilterMode('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                    storeFilterMode === 'all'
+                      ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 font-extrabold shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>All Stores</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold">
+                    {allCandidateShops.length}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setStoreFilterMode('nearby')}
+                  className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                    storeFilterMode === 'nearby'
+                      ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 font-extrabold shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <span>Within {searchRadiusKm} km</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    shopsWithinRadius.length > 0 
+                      ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300' 
+                      : 'bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300'
+                  }`}>
+                    {shopsWithinRadius.length}
+                  </span>
+                </button>
+              </div>
             </div>
 
             {nearbyShops.length === 0 ? (
               <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
                 <Store className="w-10 h-10 text-slate-400 mx-auto mb-2 opacity-50" />
                 <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No stores registered in this radius yet.</p>
-                <p className="text-xs text-slate-500 mt-1">Try expanding radius to 15km or 25km.</p>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => setStoreFilterMode('all')}
+                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors"
+                  >
+                    View All {allCandidateShops.length} Stores
+                  </button>
+                  <button
+                    onClick={() => setSearchRadiusKm(25)}
+                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors"
+                  >
+                    Expand to 25 km
+                  </button>
+                </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {nearbyShops.map((shop) => (
-                  <ShopCard
-                    key={shop.id}
-                    shop={shop}
-                    onOpenShop={(shopId) => {
-                      recordShopInteraction(shopId, 'view');
-                      setActiveShopId(shopId);
-                    }}
-                  />
-                ))}
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {paginatedShops.map((shop) => (
+                    <ShopCard
+                      key={shop.id}
+                      shop={shop}
+                      onOpenShop={(shopId) => {
+                        recordShopInteraction(shopId, 'view');
+                        setActiveShopId(shopId);
+                      }}
+                    />
+                  ))}
+                </div>
+
+                {/* Shop Pagination Controls */}
+                {totalShopPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-xs text-slate-500 font-medium order-2 sm:order-1">
+                      Showing <strong className="text-slate-900 dark:text-white">{(safeShopPage - 1) * SHOPS_PER_PAGE + 1}</strong> to <strong className="text-slate-900 dark:text-white">{Math.min(safeShopPage * SHOPS_PER_PAGE, nearbyShops.length)}</strong> of <strong className="text-slate-900 dark:text-white">{nearbyShops.length}</strong> shops
+                    </div>
+
+                    <div className="flex items-center gap-1.5 order-1 sm:order-2">
+                      <button
+                        onClick={() => {
+                          setShopPage(prev => Math.max(1, prev - 1));
+                          document.getElementById('customer-shops-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        disabled={safeShopPage === 1}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 shadow-xs"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Prev</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalShopPages }, (_, i) => i + 1).map((pageNum) => (
+                          <button
+                            key={pageNum}
+                            onClick={() => {
+                              setShopPage(pageNum);
+                              document.getElementById('customer-shops-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                            className={`w-8 h-8 rounded-xl text-xs font-black transition-all flex items-center justify-center ${
+                              safeShopPage === pageNum
+                                ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setShopPage(prev => Math.min(totalShopPages, prev + 1));
+                          document.getElementById('customer-shops-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        disabled={safeShopPage === totalShopPages}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 shadow-xs"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>

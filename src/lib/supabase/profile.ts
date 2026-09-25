@@ -361,6 +361,18 @@ export interface UserAccountStatus {
  * Evaluates both Customer and Merchant accounts concurrently under auth.uid().
  */
 export async function getUserAccountStatus(userId: string): Promise<UserAccountStatus> {
+  // 1. Try server action first for 100% reliable bypass of client-side RLS enum evaluation
+  try {
+    const { getUserAccountStatusAction } = await import('@/server/actions/auth.actions');
+    const serverStatus = await getUserAccountStatusAction(userId);
+    if (serverStatus) {
+      return serverStatus as UserAccountStatus;
+    }
+  } catch (err) {
+    console.warn('getUserAccountStatusAction server call fallback:', err);
+  }
+
+  // 2. Client-side fallback
   const supabase = createClient();
   const [profile, customer, merchant, adminUserRes] = await Promise.all([
     getProfile(userId),

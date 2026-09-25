@@ -13,6 +13,7 @@ import {
   getAdminDashboardDataAction,
   verifyShopAction, 
   deleteShopAction, 
+  deleteProductAction,
   deleteCustomerAction,
   resolveAnomalyAction,
   resolveReportAction,
@@ -131,6 +132,7 @@ export function AdminDashboardView({
   // Deletion Confirmation States
   const [shopToDelete, setShopToDelete] = useState<{ id: string; name: string } | null>(null);
   const [customerToDelete, setCustomerToDelete] = useState<{ id: string; name: string; mobile: string } | null>(null);
+  const [productToDelete, setProductToDelete] = useState<{ id: string; name: string; brand?: string } | null>(null);
 
   useEffect(() => {
     if (!activeMobileView) return;
@@ -245,6 +247,32 @@ export function AdminDashboardView({
       }
     } catch (err: any) {
       showToast(err?.message || 'Deletion error', 'error');
+    }
+  };
+
+  // 4b. Confirm Delete Product from Database (Super Admin)
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) return;
+    const { id, name } = productToDelete;
+    setActionLoadingId(id);
+    try {
+      const res = await deleteProductAction(id);
+      if (res.success) {
+        setMasterProducts(prev => prev.filter(p => p.id !== id));
+        showToast({
+          title: 'Product Permanently Deleted',
+          message: `"${name}" and all associated counter listings were deleted from the database.`,
+          type: 'success',
+        });
+        setProductToDelete(null);
+        refreshLiveDashboard(false);
+      } else {
+        showToast(res.error || 'Failed to delete product from database', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Product deletion error', 'error');
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -965,10 +993,17 @@ export function AdminDashboardView({
                   </div>
 
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
-                    <span className="text-[11px] text-slate-400">Barcode / SKU active</span>
                     <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/40">
                       Standard Verified
                     </span>
+                    <button
+                      onClick={() => setProductToDelete({ id: prod.id, name: prod.name, brand: prod.brand })}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-rose-500 hover:text-white hover:bg-rose-600 dark:hover:bg-rose-600 transition-colors text-xs font-bold border border-rose-200 dark:border-rose-900/40"
+                      title="Permanently delete product from master catalog"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1053,6 +1088,48 @@ export function AdminDashboardView({
               onClick={confirmDeleteCustomer}
             >
               Permanently Delete Account
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* CONFIRM DELETE PRODUCT MODAL */}
+      <Modal
+        isOpen={Boolean(productToDelete)}
+        onClose={() => setProductToDelete(null)}
+        size="sm"
+        title="Confirm Master Product Deletion"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-2xl text-xs space-y-2">
+            <div className="flex items-center space-x-2 text-rose-700 dark:text-rose-400 font-bold">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <span>Irreversible Administrative Action</span>
+            </div>
+            <p className="text-slate-700 dark:text-slate-300">
+              Are you sure you want to permanently delete <strong>{productToDelete?.name}</strong>{productToDelete?.brand ? ` (${productToDelete.brand})` : ''}?
+            </p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              This will remove this product from the master catalog, including all live merchant inventory rates, counter price tags, and search comparisons across the platform.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setProductToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              leftIcon={<Trash2 className="w-4 h-4" />}
+              onClick={confirmDeleteProduct}
+              isLoading={actionLoadingId === productToDelete?.id}
+            >
+              Permanently Delete Product
             </Button>
           </div>
         </div>

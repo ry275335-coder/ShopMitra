@@ -13,6 +13,7 @@ import { useToast } from '@/components/ui/Toast';
 import { fetchDbShops, fetchDbCustomers, insertDbShop } from '@/lib/supabase/db';
 import { createClient } from '@/lib/supabase/client';
 import { deleteShopAction, deleteCustomerAction } from '@/server/actions/admin.actions';
+import { merchantDeleteShopAction } from '@/server/actions/merchant.actions';
 import { 
   getProfile, 
   getCustomerByProfileId, 
@@ -259,7 +260,41 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
       // Load merchant shops if merchant account exists
       if (status.hasMerchantAccount) {
-        await loadMerchantShops(user.id);
+        if (status.shops && status.shops.length > 0) {
+          const parsedShops: Shop[] = status.shops.map((s: any) => {
+            const { lat, lng } = parsePostGisPoint(s.location);
+            return {
+              id: s.id,
+              businessId: s.business_id || s.businesses?.id || '',
+              name: s.name,
+              slug: s.slug,
+              phone: s.phone,
+              whatsapp: s.whatsapp,
+              address: s.address,
+              landmark: s.landmark,
+              city: s.city,
+              lat,
+              lng,
+              openingHours: s.opening_hours,
+              weeklyHolidays: [],
+              isOpen: s.is_open,
+              isVerified: s.is_verified,
+              verificationBadge: s.verification_badge || (s.is_verified ? 'Verified Retail Partner' : undefined),
+              photos: s.photos || [],
+              rating: s.rating || 5.0,
+              reviewCount: s.review_count || 0,
+              isActive: s.is_active,
+              createdAt: s.created_at,
+            };
+          });
+          setRegisteredShops(parsedShops);
+          setActiveMerchantShopId((prev) => {
+            if (prev && parsedShops.some((s) => s.id === prev)) return prev;
+            return parsedShops[0]?.id || '';
+          });
+        } else {
+          await loadMerchantShops(user.id);
+        }
       } else {
         setRegisteredShops([]);
         setActiveMerchantShopId('');
@@ -349,7 +384,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
           const { lat, lng } = parsePostGisPoint(s.location);
           return {
             id: s.id,
-            businessId: s.businesses?.id || '',
+            businessId: s.business_id || s.businesses?.id || '',
             name: s.name,
             slug: s.slug,
             phone: s.phone,
@@ -429,9 +464,11 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       // Public shop catalog
       fetchDbShops().then((dbShops) => {
         if (dbShops?.length > 0) {
+          // If a shop is active in DB, ensure it isn't incorrectly suppressed by stale test deletedShopIds
+          setDeletedShopIds((prev) => prev.filter(id => !dbShops.some(s => s.id === id)));
           setPublicShops((prev) => {
             const map = new Map<string, Shop>();
-            dbShops.forEach((s) => { if (!delIds.includes(s.id)) map.set(s.id, s); });
+            dbShops.forEach((s) => map.set(s.id, s));
             prev.forEach((s) => { if (!delIds.includes(s.id)) map.set(s.id, s); });
             return Array.from(map.values());
           });
@@ -580,10 +617,18 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   };
 
   const deleteShop = async (shopId: string) => {
-    try { await deleteShopAction(shopId); } catch (err) { console.warn('deleteShopAction notice:', err); }
+    try {
+      const res = await merchantDeleteShopAction(shopId);
+      if (!res.success) {
+        await deleteShopAction(shopId);
+      }
+    } catch (err) {
+      console.warn('deleteShop error:', err);
+    }
     setDeletedShopIds((prev) => Array.from(new Set([...prev, shopId])));
     setRegisteredShops((prev) => prev.filter((s) => s.id !== shopId));
     setPublicShops((prev) => prev.filter((s) => s.id !== shopId));
+    try { localStorage.removeItem('shopmitra_shop_inventory_' + shopId); } catch {}
     setActiveMerchantShopId((prev) => {
       if (prev === shopId) {
         const remaining = registeredShops.filter((s) => s.id !== shopId);
@@ -591,7 +636,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       }
       return prev;
     });
-    showToast('🗑️ Shop account deleted permanently', 'info');
+    showToast('🗑️ Store deleted permanently', 'info');
   };
 
   const allShops = useMemo(() => {
@@ -682,7 +727,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         updateRegisteredShop,
         deleteShop,
         deletedShopIds,
-        searchRadiusKm: userLocation.radiusKm || 5,
+        searchRadiusKm: userLocation.radiusKm || 15,
         setSearchRadiusKm: (radius: number) => setUserLocation((prev) => ({ ...prev, radiusKm: radius })),
         showToast,
         wishlist,

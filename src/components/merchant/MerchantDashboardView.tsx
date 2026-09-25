@@ -16,6 +16,7 @@ import { getShopTelemetry, ShopTelemetry } from '@/lib/analytics/interactionTrac
 import { ShopProduct, MasterProduct, Shop } from '@/types';
 import { fetchDbProducts, fetchDbShopProducts } from '@/lib/supabase/db';
 import { createClient } from '@/lib/supabase/client';
+import { uploadShopImageAction } from '@/server/actions/upload.actions';
 import { 
   Store, 
   PlusCircle, 
@@ -38,7 +39,9 @@ import {
   Navigation, 
   Camera, 
   Upload,
-  User
+  User,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
@@ -58,6 +61,7 @@ export function MerchantDashboardView({
     setActiveMerchantShopId, 
     registeredShops, 
     updateRegisteredShop, 
+    deleteShop,
     customerUser,
     hasCustomerAccount,
     switchPortal,
@@ -69,6 +73,8 @@ export function MerchantDashboardView({
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showBillModal, setShowBillModal] = useState(false);
   const [showEditShopModal, setShowEditShopModal] = useState(false);
+  const [showDeleteShopConfirm, setShowDeleteShopConfirm] = useState(false);
+  const [isDeletingShop, setIsDeletingShop] = useState(false);
   const [isStoreOpen, setIsStoreOpen] = useState(true);
   const [isDetectingLoc, setIsDetectingLoc] = useState(false);
 
@@ -236,29 +242,17 @@ export function MerchantDashboardView({
 
     try {
       showToast('Uploading storefront photo...', 'info');
-      const supabase = createClient();
-      const fileExt = file.name.split('.').pop() || 'jpg';
-      const activeId = activeShop?.id || 'store';
-      const filePath = `storefronts/${activeId}_${Date.now()}.${fileExt}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadShopImageAction(formData);
 
-      const { error: uploadError } = await supabase.storage
-        .from('shop-images')
-        .upload(filePath, file, { contentType: file.type, upsert: true });
-
-      if (uploadError) {
-        console.warn('Shop image storage upload fallback:', uploadError.message);
-        showToast('Storage upload failed: ' + uploadError.message, 'error');
+      if (!res.success || !res.url) {
+        showToast(res.error || 'Failed to upload photo', 'error');
         return;
       }
 
-      const { data: urlData } = supabase.storage
-        .from('shop-images')
-        .getPublicUrl(filePath);
-
-      if (urlData?.publicUrl) {
-        setEditForm(prev => ({ ...prev, photoUrl: urlData.publicUrl }));
-        showToast('📸 Storefront photo uploaded successfully!');
-      }
+      setEditForm(prev => ({ ...prev, photoUrl: res.url || '' }));
+      showToast('📸 Storefront photo uploaded successfully!');
     } catch (err: any) {
       showToast(err.message || 'Error processing photo', 'error');
     } finally {
@@ -521,13 +515,24 @@ export function MerchantDashboardView({
                   <span className="truncate">{activeShop.address} {activeShop.landmark ? `(${activeShop.landmark})` : ''} • <strong className="text-white font-bold">{activeShop.city}</strong></span>
                 </p>
                 {isMyRegisteredStore && (
-                  <button
-                    onClick={() => setShowEditShopModal(true)}
-                    className="bg-slate-800/80 hover:bg-slate-700 text-merchant-400 hover:text-merchant-300 text-xs font-bold px-2.5 py-1 rounded-xl border border-slate-700/80 flex items-center space-x-1 transition-all shrink-0"
-                    title="Edit store location, city and counter coordinates"
-                  >
-                    <span>✏️ Change City / Address</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowEditShopModal(true)}
+                      className="bg-slate-800/80 hover:bg-slate-700 text-merchant-400 hover:text-merchant-300 text-xs font-bold px-2.5 py-1 rounded-xl border border-slate-700/80 flex items-center space-x-1 transition-all shrink-0"
+                      title="Edit store location, city and counter coordinates"
+                    >
+                      <span>✏️ Change City / Address</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteShopConfirm(true)}
+                      className="bg-slate-800/80 hover:bg-rose-950/80 text-rose-400 hover:text-rose-300 text-xs font-bold px-2.5 py-1 rounded-xl border border-rose-900/40 flex items-center space-x-1 transition-all shrink-0"
+                      title="Permanently delete this shop and its inventory"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Delete Store</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1087,22 +1092,81 @@ export function MerchantDashboardView({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowEditShopModal(false)}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                  onClick={() => setShowDeleteShopConfirm(true)}
+                  className="px-3.5 py-2.5 rounded-xl text-xs font-black text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors flex items-center gap-1.5"
                 >
-                  Cancel
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Store</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl text-xs font-black bg-merchant-600 hover:bg-merchant-700 text-white shadow-md shadow-merchant-500/20 transition-colors"
-                >
-                  Save Location Changes
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditShopModal(false)}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 rounded-xl text-xs font-black bg-merchant-600 hover:bg-merchant-700 text-white shadow-md shadow-merchant-500/20 transition-colors"
+                  >
+                    Save Location Changes
+                  </button>
+                </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Delete Shop Confirmation Modal */}
+      {showDeleteShopConfirm && activeShop && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto shadow-xs">
+              <Trash2 className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900">
+                Delete "{activeShop.name}"?
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                This will permanently remove this store, its address, and all associated product prices. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteShopConfirm(false)}
+                disabled={isDeletingShop}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors w-full"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!activeShop?.id) return;
+                  setIsDeletingShop(true);
+                  try {
+                    await deleteShop(activeShop.id);
+                    setShowDeleteShopConfirm(false);
+                    setShowEditShopModal(false);
+                  } catch (err: any) {
+                    showToast(err.message || 'Error deleting shop', 'error');
+                  } finally {
+                    setIsDeletingShop(false);
+                  }
+                }}
+                disabled={isDeletingShop}
+                className="px-4 py-2.5 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/20 transition-all flex items-center justify-center gap-1.5 w-full active:scale-95 disabled:opacity-50"
+              >
+                {isDeletingShop ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>Yes, Delete Store</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

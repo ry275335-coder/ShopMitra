@@ -784,25 +784,27 @@ export function Header({
               )
             )}
 
-            {/* Merchant Quick Access CTA in Customer Mode */}
+            {/* Merchant Quick Access CTA in Customer Mode (Visible on both phone & desktop) */}
             {role === 'customer' && (
-              hasMerchantAccount ? (
+              (hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? (
                 <button
                   onClick={() => switchPortal('merchant')}
-                  className="hidden sm:flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-2xl text-xs font-black transition-colors shrink-0 shadow-sm"
+                  className="flex items-center space-x-1 sm:space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-colors shrink-0 shadow-sm"
                   title="Switch to Merchant Operations Dashboard"
                 >
                   <Store className="w-3.5 h-3.5" />
-                  <span>Merchant Dashboard</span>
+                  <span>Merchant</span>
+                  <span className="hidden sm:inline"> Dashboard</span>
                 </button>
               ) : onOpenOnboarding ? (
                 <button
                   onClick={onOpenOnboarding}
-                  className="hidden sm:flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-2xl text-xs font-black transition-colors shrink-0 shadow-sm"
+                  className="flex items-center space-x-1 sm:space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-colors shrink-0 shadow-sm"
                   title="List your shop on ShopMitra"
                 >
                   <Store className="w-3.5 h-3.5" />
-                  <span>Become a Merchant</span>
+                  <span className="hidden xs:inline">Become a </span>
+                  <span>Merchant</span>
                 </button>
               ) : null
             )}
@@ -811,10 +813,10 @@ export function Header({
             {role === 'merchant' && (
               <button
                 onClick={() => switchPortal('customer')}
-                className="hidden sm:flex items-center space-x-1.5 bg-brand-50 text-brand-700 hover:bg-brand-100 px-3 py-2 rounded-2xl text-xs font-black border border-brand-200 transition-colors shrink-0 shadow-sm"
+                className="flex items-center space-x-1 sm:space-x-1.5 bg-brand-50 text-brand-700 hover:bg-brand-100 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black border border-brand-200 transition-colors shrink-0 shadow-sm"
                 title="View Customer Storefront"
               >
-                <span>🛍️ Storefront View</span>
+                <span>🛍️ Storefront</span>
               </button>
             )}
           </div>

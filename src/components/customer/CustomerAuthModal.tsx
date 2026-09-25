@@ -87,6 +87,7 @@ export function CustomerAuthModal({
     role,
     hasCustomerAccount,
     hasMerchantAccount,
+    registeredShops,
     switchPortal,
     refreshAccountStatus,
     createCustomerAccountAction,
@@ -188,33 +189,17 @@ export function CustomerAuthModal({
       setError('');
       setOtp('');
 
-      if (initialRole === 'customer') {
-        if (hasCustomerAccount && customerUser?.isLoggedIn) {
-          setStep('logged-in');
-        } else {
-          // If customer has no existing completed account in database, open profile creation form
-          setStep('collect-profile');
-          if (authUser) {
-            if (authUser.email && !email) setEmail(authUser.email);
-            if (authUser.phone && !phone) {
-              const clean = authUser.phone.replace(/^\+91/, '');
-              setPhone(clean);
-            }
-            if (authUser.user_metadata?.full_name && !fullName) {
-              setFullName(authUser.user_metadata.full_name);
-            }
-          }
-          // Auto-detect GPS location
-          if (!isGpsPinned) {
-            handleDetectGps();
-          }
-        }
-      } else {
+      if (customerUser?.isLoggedIn) {
+        // Logged in user -> Always show unified Account Dashboard
+        setStep('logged-in');
+      } else if (initialRole === 'merchant') {
         if (hasMerchantAccount) {
           setStep('logged-in');
         } else {
           setStep('choose-method');
         }
+      } else {
+        setStep('choose-method');
       }
     }
     const handleUpdate = () => setVisitedStores(getCustomerStoreInteractions());
@@ -773,17 +758,17 @@ export function CustomerAuthModal({
                       🛍️ Customer: {hasCustomerAccount ? 'Active' : 'None'}
                     </span>
                     <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
-                      hasMerchantAccount
+                      (hasMerchantAccount || (registeredShops && registeredShops.length > 0))
                         ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
                         : 'bg-slate-100 text-slate-400 border-slate-200'
                     }`}>
-                      🏪 Merchant: {hasMerchantAccount ? 'Active' : 'None'}
+                      🏪 Merchant: {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) ? 'Active' : 'None'}
                     </span>
                   </div>
                 </div>
 
-                {/* Context Switcher when both accounts exist */}
-                {hasCustomerAccount && hasMerchantAccount && (
+                {/* Context Switcher when merchant account exists */}
+                {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) && (
                   <div className="pt-2 border-t border-slate-200">
                     <span className="text-[11px] font-bold text-slate-500 block mb-1.5">
                       Current View: <strong className="text-slate-900 capitalize">{role} Mode</strong>
@@ -821,7 +806,7 @@ export function CustomerAuthModal({
               </div>
 
               {/* Become a Merchant CTA (when user is customer only) */}
-              {!hasMerchantAccount && (
+              {!(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) && (
                 <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-2xl flex items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-1.5 text-xs font-black text-emerald-950">

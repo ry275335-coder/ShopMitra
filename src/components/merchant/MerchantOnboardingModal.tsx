@@ -20,6 +20,7 @@ import {
   maskEmail,
 } from '@/lib/supabase/auth';
 import { OtpInput } from '@/components/auth/OtpInput';
+import { uploadShopImageAction } from '@/server/actions/upload.actions';
 import {
   X,
   Store,
@@ -306,31 +307,17 @@ export function MerchantOnboardingModal({
 
     try {
       showToast('Uploading storefront photo...', 'info');
-      const supabase = createClient();
-      const fileExt = file.name.split('.').pop() || 'jpg';
-      const activeId = authUser?.id || supabaseUserId || 'store';
-      const filePath = `${activeId}/${Date.now()}.${fileExt}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadShopImageAction(formData);
 
-      const { data, error } = await supabase.storage
-        .from('shop-images')
-        .upload(filePath, file, { contentType: file.type, upsert: true });
-
-      if (error) {
-        console.warn('Shop image storage upload fallback:', error.message);
-        const objectUrl = URL.createObjectURL(file);
-        setForm((prev) => ({ ...prev, photoUrl: objectUrl }));
-        showToast('Storefront photo selected!');
+      if (!res.success || !res.url) {
+        showToast(res.error || 'Failed to upload photo', 'error');
         return;
       }
 
-      const { data: urlData } = supabase.storage
-        .from('shop-images')
-        .getPublicUrl(filePath);
-
-      if (urlData?.publicUrl) {
-        setForm((prev) => ({ ...prev, photoUrl: urlData.publicUrl }));
-        showToast('📸 Storefront photo uploaded successfully!');
-      }
+      setForm((prev) => ({ ...prev, photoUrl: res.url || '' }));
+      showToast('📸 Storefront photo uploaded successfully!');
     } catch (err: any) {
       showToast(err.message || 'Error processing photo', 'error');
     }

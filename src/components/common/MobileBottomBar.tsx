@@ -38,7 +38,7 @@ export function MobileBottomBar({
   activeView: string;
   setActiveView: (view: string) => void;
 }) {
-  const { role, wishlist, customerUser } = useApp();
+  const { role, wishlist, customerUser, hasMerchantAccount, registeredShops, switchPortal } = useApp();
 
   return (
     <nav
@@ -108,6 +108,17 @@ export function MobileBottomBar({
             >
               <User className="w-5 h-5" />
               <span>{customerUser?.isLoggedIn ? 'Account' : 'Sign In'}</span>
+            </button>
+          )}
+
+          {(hasMerchantAccount || (registeredShops && registeredShops.length > 0)) && (
+            <button
+              onClick={() => switchPortal('merchant')}
+              className="flex flex-col items-center py-1 px-1.5 rounded-xl text-[10px] font-bold text-emerald-600 hover:text-emerald-700 transition-colors"
+              title="Open Merchant Operations Dashboard"
+            >
+              <Store className="w-5 h-5 text-emerald-600" />
+              <span>Merchant</span>
             </button>
           )}
         </>

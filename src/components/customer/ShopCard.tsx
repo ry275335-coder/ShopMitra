@@ -96,10 +96,13 @@ export function ShopCard({
         {/* Exterior Photo Banner */}
         <div className="h-36 sm:h-40 bg-slate-100 relative overflow-hidden">
           <img
-            src={shop.photos[0] || 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80'}
+            src={(shop.photos && shop.photos[0] && !shop.photos[0].startsWith('blob:')) ? shop.photos[0] : 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80'}
             alt={shop.name}
             loading="lazy"
             decoding="async"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80';
+            }}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />

@@ -482,11 +482,17 @@ export async function deleteShopAction(shopId: string): Promise<{ success: boole
 
     const adminDb = createAdminSupabase();
 
-    // 1. Delete associated shop products
-    await adminDb.from('shop_products').delete().eq('shop_id', shopId);
-    // 2. Delete shop hours
-    await adminDb.from('shop_hours').delete().eq('shop_id', shopId);
-    // 3. Delete shop
+    // 1. Delete associated shop products / inventory
+    try {
+      await adminDb.from('shop_products').delete().eq('shop_id', shopId);
+    } catch {}
+
+    // 2. Delete associated reviews if table exists
+    try {
+      await adminDb.from('reviews').delete().eq('shop_id', shopId);
+    } catch {}
+
+    // 3. Delete shop from shops table
     const { error } = await adminDb.from('shops').delete().eq('id', shopId);
 
     if (error) return { success: false, error: error.message };
@@ -500,6 +506,53 @@ export async function deleteShopAction(shopId: string): Promise<{ success: boole
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to delete shop' };
+  }
+}
+
+/**
+ * Super Admin / Admin: Permanently deletes a master product from the catalog
+ * Cascades removal of associated shop_products, price alerts, and reviews.
+ */
+export async function deleteProductAction(productId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const auth = await verifyAdminCaller('admin');
+    if (!auth.authorized) {
+      return { success: false, error: auth.error || 'Unauthorized: admin privilege required' };
+    }
+
+    const adminDb = createAdminSupabase();
+
+    // 1. Delete associated price alerts
+    try {
+      await adminDb.from('price_alerts').delete().eq('product_id', productId);
+    } catch {}
+
+    // 2. Delete associated reviews
+    try {
+      await adminDb.from('reviews').delete().eq('product_id', productId);
+    } catch {}
+
+    // 3. Delete associated inventory in shop_products
+    try {
+      await adminDb.from('shop_products').delete().eq('product_id', productId);
+    } catch {}
+
+    // 4. Delete the product itself
+    const { error } = await adminDb.from('products').delete().eq('id', productId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    await logAdminAction({
+      action: 'product.delete',
+      targetType: 'product',
+      targetId: productId,
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete product' };
   }
 }
 

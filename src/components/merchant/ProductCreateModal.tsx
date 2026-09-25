@@ -37,6 +37,7 @@ import { useToast } from '@/components/ui/Toast';
 import { BarcodeScannerOverlay } from '@/components/common/BarcodeScannerOverlay';
 import { BarcodeProductInfo } from '@/lib/barcodeCatalog';
 import { createClient } from '@/lib/supabase/client';
+import { uploadProductImageAction } from '@/server/actions/upload.actions';
 
 
 
@@ -240,27 +241,17 @@ export function ProductCreateModal({
     setIsProcessingImage(true);
     try {
       showToast('Uploading product photo to storage...', 'info');
-      const supabase = createClient();
-      const fileExt = file.name.split('.').pop() || 'jpg';
-      const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadProductImageAction(formData);
 
-      const { data, error } = await supabase.storage
-        .from('product-images')
-        .upload(filePath, file, { contentType: file.type, upsert: true });
-
-      if (error) {
-        console.warn('Product image storage upload fallback:', error.message);
-        const objectUrl = URL.createObjectURL(file);
-        setForm(prev => ({ ...prev, imageUrl: objectUrl }));
-      } else {
-        const { data: urlData } = supabase.storage
-          .from('product-images')
-          .getPublicUrl(filePath);
-        if (urlData?.publicUrl) {
-          setForm(prev => ({ ...prev, imageUrl: urlData.publicUrl }));
-          showToast(source === 'camera' ? '📷 Product photo uploaded!' : '🖼️ Photo uploaded to storage!');
-        }
+      if (!res.success || !res.url) {
+        showToast(res.error || 'Failed to upload photo', 'error');
+        return;
       }
+
+      setForm(prev => ({ ...prev, imageUrl: res.url || '' }));
+      showToast(source === 'camera' ? '📷 Product photo uploaded!' : '🖼️ Photo uploaded to storage!');
     } catch (err: any) {
       showToast(err.message || 'Error uploading photo', 'error');
     } finally {
@@ -323,21 +314,13 @@ export function ProductCreateModal({
       canvas.toBlob(async (blob) => {
         if (blob) {
           try {
-            const supabase = createClient();
-            const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
-            const { error } = await supabase.storage
-              .from('product-images')
-              .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+            const formData = new FormData();
+            formData.append('file', blob, `live_${Date.now()}.jpg`);
+            const res = await uploadProductImageAction(formData);
 
-            if (!error) {
-              const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(filePath);
-              if (urlData?.publicUrl) {
-                setForm(prev => ({ ...prev, imageUrl: urlData.publicUrl }));
-                showToast('📷 Live photo uploaded to storage!');
-              }
-            } else {
-              const objectUrl = URL.createObjectURL(blob);
-              setForm(prev => ({ ...prev, imageUrl: objectUrl }));
+            if (res.success && res.url) {
+              setForm(prev => ({ ...prev, imageUrl: res.url || '' }));
+              showToast('📷 Live photo uploaded to storage!');
             }
           } catch (err) {
             console.warn('Live camera storage upload error:', err);
