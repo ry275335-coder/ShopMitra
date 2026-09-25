@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://vhbhupmiwbwsaqeuziin.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZoYmh1cG1pd2J3c2FxZXV6aWluIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTc1NTA5MiwiZXhwIjoyMTA1MzMxMDkyfQ.NESHP7JGXDTEtgn5qXsIk5-Hb1lxtWaKess2jfM_3tg';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vhbhupmiwbwsaqeuziin.supabase.co';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseKey) {
+  console.error('Error: SUPABASE_SERVICE_ROLE_KEY environment variable is required.');
+  process.exit(1);
+}
 
 const client = createClient(supabaseUrl, supabaseKey);
 

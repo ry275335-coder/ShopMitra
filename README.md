@@ -145,8 +145,8 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 # Supabase Credentials
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOi...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-public-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
 # Default Spatial Coordinates (Baseline Central Market)
 NEXT_PUBLIC_DEFAULT_LAT=19.0760
