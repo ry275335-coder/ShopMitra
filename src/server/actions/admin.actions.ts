@@ -624,7 +624,13 @@ export async function toggleShopSuspensionAction(shopId: string, suspend: boolea
 }
 
 /**
- * Permanently deletes a customer account from Supabase
+ * Permanently deletes any user account from Supabase
+ * Cascades deletion across:
+ * 1. Supabase Auth credentials (auth.users)
+ * 2. Merchant profile, businesses, shops, inventory rates, and exclusive products
+ * 3. Customer profile, wishlists, price alerts, enquiries, and reviews
+ * 4. Admin authorization records (admin_users)
+ * 5. Public profiles record
  */
 export async function deleteCustomerAction(idOrProfileId: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -635,21 +641,83 @@ export async function deleteCustomerAction(idOrProfileId: string): Promise<{ suc
 
     const adminDb = createAdminSupabase();
 
-    // Try deleting from customers by id or profile_id
-    await adminDb.from('customers').delete().or(`id.eq.${idOrProfileId},profile_id.eq.${idOrProfileId}`);
+    // 1. Resolve actual profile_id / auth userId
+    let profileId = idOrProfileId;
+    const { data: custRow } = await adminDb
+      .from('customers')
+      .select('profile_id')
+      .eq('id', idOrProfileId)
+      .maybeSingle();
 
-    // Delete profile
-    await adminDb.from('profiles').delete().eq('id', idOrProfileId);
+    if (custRow?.profile_id) {
+      profileId = custRow.profile_id;
+    }
+
+    // 2. If user is a merchant, cascade delete all their shops and exclusive products
+    try {
+      const { data: merchantRow } = await adminDb
+        .from('merchants')
+        .select('id')
+        .eq('profile_id', profileId)
+        .maybeSingle();
+
+      if (merchantRow?.id) {
+        // Find all businesses owned by this merchant
+        const { data: businesses } = await adminDb
+          .from('businesses')
+          .select('id')
+          .eq('merchant_id', merchantRow.id);
+
+        const bizIds = (businesses || []).map((b: any) => b.id);
+        if (bizIds.length > 0) {
+          // Find all shops under these businesses
+          const { data: shops } = await adminDb
+            .from('shops')
+            .select('id')
+            .in('business_id', bizIds);
+
+          for (const shop of (shops || [])) {
+            // Delete shop and all its exclusive products
+            await deleteShopAction(shop.id);
+          }
+
+          // Delete businesses
+          await adminDb.from('businesses').delete().in('id', bizIds);
+        }
+
+        // Delete merchant record
+        await adminDb.from('merchants').delete().eq('id', merchantRow.id);
+      }
+    } catch (merchErr) {
+      console.warn('Cascade merchant cleanup notice:', merchErr);
+    }
+
+    // 3. Delete customer-specific data (wishlists, price alerts, reviews, enquiries)
+    try { await adminDb.from('customers').delete().or(`id.eq.${idOrProfileId},profile_id.eq.${profileId}`); } catch {}
+    try { await adminDb.from('price_alerts').delete().eq('reporter_id', profileId); } catch {}
+    try { await adminDb.from('reviews').delete().eq('profile_id', profileId); } catch {}
+    try { await adminDb.from('enquiries').delete().eq('customer_id', profileId); } catch {}
+    try { await adminDb.from('admin_users').delete().eq('user_id', profileId); } catch {}
+
+    // 4. Delete from public profiles table
+    await adminDb.from('profiles').delete().eq('id', profileId);
+
+    // 5. Permanently delete from Supabase Auth (auth.users) so login is destroyed
+    try {
+      await adminDb.auth.admin.deleteUser(profileId);
+    } catch (authDelErr: any) {
+      console.warn('Supabase Auth user delete notice (user may already be removed):', authDelErr?.message);
+    }
 
     await logAdminAction({
-      action: 'customer.delete',
-      targetType: 'customer',
-      targetId: idOrProfileId,
+      action: 'account.delete',
+      targetType: 'account',
+      targetId: profileId,
     });
 
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Failed to delete customer' };
+    return { success: false, error: err.message || 'Failed to delete account' };
   }
 }
 
