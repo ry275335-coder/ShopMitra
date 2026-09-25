@@ -13,11 +13,13 @@ import {
   becomeMerchantSchema,
   shopOnboardingSchema, 
   csvProductRowSchema,
+  updateProductDetailsSchema,
   PriceUpdateInput,
   ProductCreateInput,
   BecomeMerchantInput,
   ShopOnboardingInput,
-  CsvProductRow
+  CsvProductRow,
+  UpdateProductDetailsInput
 } from '@/lib/validations';
 import { getProducts } from '@/server/queries/catalog.queries';
 import { upsertDbShopProduct, dbClient } from '@/lib/supabase/db';
@@ -62,12 +64,12 @@ export async function becomeMerchantAction(input: BecomeMerchantInput) {
     return { success: false, error: validated.error.errors[0].message };
   }
 
-  // Derive identity from authenticated session, with validated userId fallback
+  // Derive identity strictly from authenticated session (IDOR mitigation)
   const user = await getAuthenticatedUser();
-  const activeUserId = user?.id || validated.data.userId;
-  if (!activeUserId) {
+  if (!user?.id) {
     return { success: false, error: 'Authentication required: please verify your phone or email before onboarding.' };
   }
+  const activeUserId = user.id;
 
   try {
     const adminSupabase = createAdminSupabase();
@@ -628,14 +630,29 @@ export async function onboardShopAction(input: ShopOnboardingInput) {
 export async function getMerchantShopsAction(requestedUserId?: string) {
   try {
     const user = await getAuthenticatedUser();
-    // Strictly isolate: use verified authenticated user ID if logged in, or requestedUserId
-    const targetUserId = requestedUserId || user?.id;
-    if (!targetUserId) {
+    if (!user?.id) {
       return [];
     }
 
     const { createAdminSupabase } = await import('@/lib/supabase/server');
     const admin = createAdminSupabase();
+
+    // Strictly isolate: default target to caller's own profile_id
+    let targetUserId = user.id;
+
+    // IDOR protection: only allow inspecting a different merchant's stores if caller has active admin privileges
+    if (requestedUserId && requestedUserId !== user.id) {
+      const { data: adminRecord } = await admin
+        .from('admin_users')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (adminRecord) {
+        targetUserId = requestedUserId;
+      }
+    }
 
     // 1. Try join query with admin client
     const { data, error } = await admin
@@ -752,67 +769,69 @@ export async function deleteShopProductAction(
 /**
  * Update an item's details (name, brand, photo, rate, stock, mrp) in the catalog and shop inventory
  */
-export async function updateProductDetailsAction(input: {
-  shopId: string;
-  productId: string;
-  name: string;
-  brand?: string;
-  mrp: number;
-  sellingPrice: number;
-  imageUrl?: string;
-  stockStatus: string;
-  stockQuantity: number;
-}): Promise<{ success: boolean; error?: string }> {
+export async function updateProductDetailsAction(
+  input: UpdateProductDetailsInput
+): Promise<{ success: boolean; error?: string }> {
+  const validated = updateProductDetailsSchema.safeParse(input);
+  if (!validated.success) {
+    return { success: false, error: validated.error.errors[0].message };
+  }
+
+  const data = validated.data;
   try {
     const user = await getAuthenticatedUser();
     if (!user) {
       return { success: false, error: 'Unauthorized: please sign in' };
     }
 
-    const isOwner = await verifyShopOwnership(user.id, input.shopId);
+    const isOwner = await verifyShopOwnership(user.id, data.shopId);
     if (!isOwner) {
       return { success: false, error: 'Unauthorized: you do not own this shop' };
     }
 
-    if (input.sellingPrice > input.mrp) {
-      return { success: false, error: 'Selling price cannot exceed printed MRP' };
-    }
-
     const adminDb = createAdminSupabase();
 
-    // 1. Update product table details
-    const prodUpdate: Record<string, any> = {
-      name: input.name.trim(),
-      brand: input.brand?.trim() || 'General',
-      mrp: input.mrp,
-      updated_at: new Date().toISOString(),
-    };
-    if (input.imageUrl && input.imageUrl.trim()) {
-      prodUpdate.image_url = input.imageUrl.trim();
+    // 1. Update product table details ONLY if no other store is selling this master product
+    const { count: otherShopCount } = await adminDb
+      .from('shop_products')
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', data.productId)
+      .neq('shop_id', data.shopId);
+
+    if (!otherShopCount || otherShopCount === 0) {
+      const prodUpdate: Record<string, any> = {
+        name: data.name.trim(),
+        brand: data.brand?.trim() || 'General',
+        mrp: data.mrp,
+        updated_at: new Date().toISOString(),
+      };
+      if (data.imageUrl && data.imageUrl.trim()) {
+        prodUpdate.image_url = data.imageUrl.trim();
+      }
+
+      const { error: prodErr } = await adminDb
+        .from('products')
+        .update(prodUpdate)
+        .eq('id', data.productId);
+
+      if (prodErr) {
+        console.warn('Update products table error:', prodErr.message);
+      }
     }
 
-    const { error: prodErr } = await adminDb
-      .from('products')
-      .update(prodUpdate)
-      .eq('id', input.productId);
-
-    if (prodErr) {
-      console.warn('Update products table error:', prodErr.message);
-    }
-
-    // 2. Update shop_products table details
+    // 2. Update shop_products table details (store-specific pricing & inventory)
     const { error: spErr } = await adminDb
       .from('shop_products')
       .update({
-        current_price: input.sellingPrice,
-        previous_price: input.sellingPrice,
-        stock_status: input.stockStatus,
-        stock_quantity: input.stockQuantity,
+        current_price: data.sellingPrice,
+        previous_price: data.sellingPrice,
+        stock_status: data.stockStatus,
+        stock_quantity: data.stockQuantity,
         last_price_updated_at: new Date().toISOString(),
         last_stock_updated_at: new Date().toISOString(),
       })
-      .eq('shop_id', input.shopId)
-      .eq('product_id', input.productId);
+      .eq('shop_id', data.shopId)
+      .eq('product_id', data.productId);
 
     if (spErr) {
       return { success: false, error: spErr.message };

@@ -152,6 +152,22 @@ export const reportCreateSchema = z.object({
   evidencePhotos: z.array(z.string().url()).default([]),
 });
 
+// 9. Product Details Update Schema
+export const updateProductDetailsSchema = z.object({
+  shopId: z.string().uuid('Valid shop UUID is required'),
+  productId: z.string().uuid('Valid product UUID is required'),
+  name: z.string().min(2, 'Product name must be at least 2 characters').max(200),
+  brand: z.string().max(100).optional(),
+  mrp: z.number().positive('MRP must be greater than 0'),
+  sellingPrice: z.number().positive('Selling price must be greater than 0'),
+  imageUrl: z.string().optional(),
+  stockStatus: z.enum(['in_stock', 'low_stock', 'out_of_stock', 'available_on_order']).default('in_stock'),
+  stockQuantity: z.number().int().nonnegative('Stock count cannot be negative').default(10),
+}).refine(data => data.sellingPrice <= data.mrp, {
+  message: 'Selling price cannot exceed printed MRP',
+  path: ['sellingPrice'],
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ShopOnboardingInput = z.infer<typeof shopOnboardingSchema>;
@@ -162,3 +178,4 @@ export type EnquiryCreateInput = z.infer<typeof enquiryCreateSchema>;
 export type PriceAlertCreateInput = z.infer<typeof priceAlertCreateSchema>;
 export type ReviewCreateInput = z.infer<typeof reviewCreateSchema>;
 export type ReportCreateInput = z.infer<typeof reportCreateSchema>;
+export type UpdateProductDetailsInput = z.infer<typeof updateProductDetailsSchema>;
