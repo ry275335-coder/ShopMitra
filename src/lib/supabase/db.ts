@@ -5,35 +5,25 @@
 
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { Shop, CustomerUser, MasterProduct, Category, ShopProductRate } from '@/types';
+import { parsePostGisPoint } from '@/lib/geo';
 
 function cleanEnvString(val?: string): string {
   if (!val) return '';
   return val.trim().replace(/^["']|["']$/g, '').trim();
 }
 
-function isValidServiceRoleKey(key?: string): boolean {
-  if (!key) return false;
-  const clean = cleanEnvString(key);
-  return clean.startsWith('eyJ') && clean.split('.').length === 3 && !clean.includes('placeholder');
-}
-
 const DEFAULT_SUPABASE_URL = 'https://vhbhupmiwbwsaqeuziin.supabase.co';
 const DEFAULT_ANON_KEY = 'sb_publishable_Er_14nAR94dcs5ZEn47l2g_z4u7QpfI';
-const DEFAULT_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZoYmh1cG1pd2J3c2FxZXV6aWluIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTc1NTA5MiwiZXhwIjoyMTA1MzMxMDkyfQ.NESHP7JGXDTEtgn5qXsIk5-Hb1lxtWaKess2jfM_3tg';
 
 const rawUrl = cleanEnvString(process.env.NEXT_PUBLIC_SUPABASE_URL);
 const supabaseUrl = rawUrl && !rawUrl.includes('placeholder') && rawUrl.startsWith('https://')
   ? rawUrl
   : DEFAULT_SUPABASE_URL;
 
-const rawServiceKey = cleanEnvString(process.env.SUPABASE_SERVICE_ROLE_KEY);
 const rawAnonKey = cleanEnvString(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-
-const supabaseKey = isValidServiceRoleKey(rawServiceKey)
-  ? rawServiceKey
-  : (rawAnonKey && !rawAnonKey.includes('placeholder') && rawAnonKey.length > 20
-    ? rawAnonKey
-    : DEFAULT_SERVICE_KEY);
+const supabaseKey = rawAnonKey && !rawAnonKey.includes('placeholder') && rawAnonKey.length > 20
+  ? rawAnonKey
+  : DEFAULT_ANON_KEY;
 
 export const dbClient = createSupabaseClient(supabaseUrl, supabaseKey, {
   auth: {
@@ -177,35 +167,8 @@ export async function insertDbProduct(product: Partial<MasterProduct>): Promise<
   }
 }
 
-// Helper to parse PostGIS EWKB or WKT Point into { lat, lng }
-export function parsePostGisPoint(location: any): { lat: number; lng: number } {
-  if (!location) return { lat: 28.6328, lng: 77.2195 };
-  if (typeof location === 'string') {
-    // If it's WKT e.g. POINT(77.2195 28.6328)
-    if (location.includes('POINT') || location.includes('(')) {
-      try {
-        const parts = location.replace(/POINT|\(|\)/gi, '').trim().split(/\s+/);
-        if (parts.length >= 2) {
-          const lng = parseFloat(parts[0]);
-          const lat = parseFloat(parts[1]);
-          if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
-        }
-      } catch {}
-    }
-    // If it's hex EWKB e.g. 0101000020E61000006EF3E8E1583C5440F14F5E1960EA3A40
-    if (/^[0-9A-Fa-f]+$/.test(location) && location.length >= 42) {
-      try {
-        const buf = Buffer.from(location, 'hex');
-        if (buf.length >= 25) {
-          const lng = buf.readDoubleLE(9);
-          const lat = buf.readDoubleLE(17);
-          if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
-        }
-      } catch {}
-    }
-  }
-  return { lat: 28.6328, lng: 77.2195 };
-}
+// Re-export universal PostGIS point parser (browser-safe, zero Buffer dependency)
+export { parsePostGisPoint };
 
 export async function fetchDbShops(): Promise<Shop[]> {
   try {
@@ -243,7 +206,7 @@ export async function fetchDbShops(): Promise<Shop[]> {
         isVerified: s.is_verified ?? false,
         photos: (s.photos && s.photos.length > 0)
           ? s.photos.map((p: string) => {
-              if (typeof p === 'string' && p.startsWith('data:image') && p.length > 5000) {
+              if (typeof p === 'string' && (p.startsWith('blob:') || (p.startsWith('data:image') && p.length > 5000))) {
                 return 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80';
               }
               return p;

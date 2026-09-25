@@ -7,7 +7,7 @@ import { dbClient } from '@/lib/supabase/db';
 export const revalidate = 300; // Cache product pages for 5 minutes
 
 interface ProductPageProps {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 }
 
 const getProductBySlug = cache(async (slug: string) => {
@@ -42,7 +42,8 @@ const getProductBySlug = cache(async (slug: string) => {
 });
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
-  const product = await getProductBySlug(params.slug);
+  const { slug } = await params;
+  const product = await getProductBySlug(slug);
   if (!product) {
     return {
       title: 'Product Not Found | ShopMitra',
@@ -62,7 +63,8 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 }
 
 export default async function ProductPage({ params }: ProductPageProps) {
-  const product = await getProductBySlug(params.slug);
+  const { slug } = await params;
+  const product = await getProductBySlug(slug);
 
   if (!product) {
     notFound();
