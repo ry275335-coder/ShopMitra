@@ -7,6 +7,7 @@
 
 import { createAdminSupabase, getAuthenticatedUser } from '@/lib/supabase/server';
 import { logAdminAction } from './audit.actions';
+import { maskPhoneNumber, maskPiiInText } from '@/lib/utils';
 
 export interface AdminMerchantItem {
   id: string;
@@ -1174,7 +1175,7 @@ export async function moderateReviewAction(
       const shopMap = new Map((shops || []).map(s => [s.id, s.name]));
       const productMap = new Map((products || []).map(p => [p.id, p.name]));
       const profileMap = new Map((profiles || []).map(p => [p.id, p.full_name || p.email]));
-      const customerMap = new Map((customers || []).map(c => [c.id, profileMap.get(c.profile_id) || c.mobile]));
+      const customerMap = new Map((customers || []).map(c => [c.id, profileMap.get(c.profile_id) || maskPhoneNumber(c.mobile)]));
 
       const reviews: AdminReviewItem[] = (rawReviews || []).map(r => ({
         id: r.id,
@@ -1184,7 +1185,7 @@ export async function moderateReviewAction(
         shopName: shopMap.get(r.shop_id) || 'Store',
         productName: r.product_id ? productMap.get(r.product_id) : undefined,
         rating: r.rating,
-        reviewText: r.review_text || '',
+        reviewText: maskPiiInText(r.review_text || ''),
         status: r.status,
         isVerifiedInteraction: Boolean(r.is_verified_interaction),
         createdAt: r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN') : 'Recent',

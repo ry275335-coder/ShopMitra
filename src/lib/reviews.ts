@@ -4,6 +4,7 @@
 // ==============================================================================
 
 import { calculateDistance } from './geo';
+import { maskPhoneNumber, maskPiiInText } from './utils';
 
 export interface VerifiedReview {
   id: string;
@@ -58,12 +59,24 @@ export function verifyInStoreProximity(
 export const SEED_VERIFIED_REVIEWS: VerifiedReview[] = [];
 
 
+function sanitizeReview(r: VerifiedReview): VerifiedReview {
+  // If authorName looks like a mobile number (10+ digits), mask it
+  const isPhoneAuthor = /^(?:\+?91)?[6-9]\d{9}$/.test(r.authorName.replace(/[\s.-]/g, ''));
+  const safeAuthor = isPhoneAuthor ? maskPhoneNumber(r.authorName) : r.authorName;
+
+  return {
+    ...r,
+    authorName: safeAuthor,
+    reviewText: maskPiiInText(r.reviewText),
+  };
+}
+
 /**
  * Get all reviews for a specific store (combines seed + local storage)
  */
 export function getReviewsForShop(shopId: string): VerifiedReview[] {
   if (typeof window === 'undefined') {
-    return SEED_VERIFIED_REVIEWS.filter(r => r.shopId === shopId);
+    return SEED_VERIFIED_REVIEWS.filter(r => r.shopId === shopId).map(sanitizeReview);
   }
 
   try {
@@ -77,9 +90,11 @@ export function getReviewsForShop(shopId: string): VerifiedReview[] {
       if (seen.has(r.id)) return false;
       seen.add(r.id);
       return true;
-    }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    })
+    .map(sanitizeReview)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch {
-    return SEED_VERIFIED_REVIEWS.filter(r => r.shopId === shopId);
+    return SEED_VERIFIED_REVIEWS.filter(r => r.shopId === shopId).map(sanitizeReview);
   }
 }
 
@@ -89,11 +104,12 @@ export function getReviewsForShop(shopId: string): VerifiedReview[] {
 export function saveVerifiedReview(review: VerifiedReview): void {
   if (typeof window === 'undefined') return;
   try {
+    const safeReview = sanitizeReview(review);
     const raw = localStorage.getItem(STORAGE_KEY);
     const current: VerifiedReview[] = raw ? JSON.parse(raw) : [];
-    current.unshift(review);
+    current.unshift(safeReview);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-    window.dispatchEvent(new CustomEvent('shopmitra:review_added', { detail: review }));
+    window.dispatchEvent(new CustomEvent('shopmitra:review_added', { detail: safeReview }));
   } catch (err) {
     console.error('Failed to save review:', err);
   }

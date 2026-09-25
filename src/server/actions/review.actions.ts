@@ -9,6 +9,7 @@
 
 import { dbClient } from '@/lib/supabase/db';
 import { getAuthenticatedUser, createServerSupabase, createAdminSupabase } from '@/lib/supabase/server';
+import { maskPiiInText } from '@/lib/utils';
 import { z } from 'zod';
 
 const submitReviewSchema = z.object({
@@ -85,13 +86,13 @@ export async function submitReviewAction(input: SubmitReviewInput) {
     }
   }
 
-  // 3. Persist review into Supabase reviews table
+  // 3. Persist review into Supabase reviews table (masking any PII in review text)
   const insertPayload = {
     customer_id: customerId,
     shop_id: shopId,
     product_id: productId && productId.length > 0 ? productId : null,
     rating,
-    review_text: reviewText,
+    review_text: maskPiiInText(reviewText),
     photos: photos || [],
     is_verified_interaction: Boolean(isInStoreVerified),
     status: 'resolved' as const, // 'resolved' makes it visible under RLS policy
@@ -134,7 +135,12 @@ export async function getShopReviewsAction(shopId: string) {
       return { success: false, error: error.message, reviews: [] };
     }
 
-    return { success: true, reviews: data || [] };
+    const sanitizedReviews = (data || []).map(r => ({
+      ...r,
+      review_text: maskPiiInText(r.review_text),
+    }));
+
+    return { success: true, reviews: sanitizedReviews };
   } catch (err: any) {
     return { success: false, error: err.message, reviews: [] };
   }

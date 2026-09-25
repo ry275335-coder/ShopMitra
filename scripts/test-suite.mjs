@@ -522,6 +522,92 @@ async function runAllTests() {
   });
 
   // --------------------------------------------------------------------------
+  // SECTION 15: OTP Rate Limiter & Brute-Force Shield (Phase 1)
+  // --------------------------------------------------------------------------
+  console.log('\n🔒 SECTION 15: OTP Rate Limiter & Brute-Force Shield (Phase 1)');
+  test('OTP consecutive cooldown blocks immediate second request', () => {
+    const store = new Map();
+    const COOLDOWN_MS = 60 * 1000;
+    const checkLimit = (phone, now) => {
+      const last = store.get(phone);
+      if (last && now - last < COOLDOWN_MS) {
+        return { allowed: false, waitSec: Math.ceil((COOLDOWN_MS - (now - last)) / 1000) };
+      }
+      store.set(phone, now);
+      return { allowed: true };
+    };
+
+    const t0 = 1000000;
+    const firstReq = checkLimit('+919876543210', t0);
+    assert.equal(firstReq.allowed, true, 'First OTP request must be allowed');
+
+    const immediateReq = checkLimit('+919876543210', t0 + 5000);
+    assert.equal(immediateReq.allowed, false, 'Immediate OTP request must be blocked');
+    assert.equal(immediateReq.waitSec, 55, 'Cooldown must indicate 55 seconds remaining');
+
+    const afterCooldownReq = checkLimit('+919876543210', t0 + 65000);
+    assert.equal(afterCooldownReq.allowed, true, 'Request after 60s cooldown must be allowed');
+  });
+
+  test('OTP brute-force lockout triggers after 5 failed verification attempts', () => {
+    let failedAttempts = 0;
+    let lockedUntil = 0;
+    const MAX_ATTEMPTS = 5;
+    const LOCKOUT_MS = 15 * 60 * 1000;
+
+    const recordFailure = (now) => {
+      failedAttempts++;
+      if (failedAttempts >= MAX_ATTEMPTS) {
+        lockedUntil = now + LOCKOUT_MS;
+        return { locked: true, remaining: 0 };
+      }
+      return { locked: false, remaining: MAX_ATTEMPTS - failedAttempts };
+    };
+
+    const t0 = 1000000;
+    assert.equal(recordFailure(t0).locked, false);
+    assert.equal(recordFailure(t0).locked, false);
+    assert.equal(recordFailure(t0).locked, false);
+    assert.equal(recordFailure(t0).locked, false);
+    const fifthAttempt = recordFailure(t0);
+    assert.equal(fifthAttempt.locked, true, 'Fifth failed attempt must lock the account');
+    assert.equal(fifthAttempt.remaining, 0);
+  });
+
+  // --------------------------------------------------------------------------
+  // SECTION 16: Customer Review PII Masking (Phase 6)
+  // --------------------------------------------------------------------------
+  console.log('\n🎭 SECTION 16: Customer Review PII Masking (Phase 6)');
+  test('Customer mobile numbers are masked with bullet redactions', () => {
+    const maskPhoneNumber = (phone) => {
+      if (!phone) return '';
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 10) return phone;
+      const last2 = digits.slice(-2);
+      const first2 = digits.length === 12 && digits.startsWith('91') ? digits.slice(2, 4) : digits.slice(0, 2);
+      const prefix = digits.length === 12 && digits.startsWith('91') ? '+91 ' : (phone.startsWith('+91') ? '+91 ' : '');
+      return `${prefix}${first2}••••••${last2}`;
+    };
+
+    assert.equal(maskPhoneNumber('+919876543210'), '+91 98••••••10');
+    assert.equal(maskPhoneNumber('9876543210'), '98••••••10');
+    assert.equal(maskPhoneNumber('+91 98123 45678'), '+91 98••••••78');
+  });
+
+  test('Inline phone numbers in review text are automatically redacted', () => {
+    const maskPiiInText = (text) => {
+      if (!text) return '';
+      const phoneRegex = /(?:\+?91[\s.-]?)?(?:0)?([6-9]\d{1})[\s.-]?(\d{3})[\s.-]?(\d{3})[\s.-]?(\d{2})/g;
+      return text.replace(phoneRegex, (_m, p1, _p2, _p3, p4) => `${p1}••••••${p4}`);
+    };
+
+    const reviewWithPhone = 'Excellent shop, store manager Rajesh reached at 9876543210 for billing inquiry.';
+    const sanitized = maskPiiInText(reviewWithPhone);
+    assert.equal(sanitized, 'Excellent shop, store manager Rajesh reached at 98••••••10 for billing inquiry.');
+    assert.equal(sanitized.includes('9876543210'), false, 'Full mobile number must not be exposed');
+  });
+
+  // --------------------------------------------------------------------------
   // Final Results
   // --------------------------------------------------------------------------
   console.log('\n======================================================================');

@@ -65,3 +65,36 @@ export function calculatePriceFreshness(updatedAtString: string): {
     badgeClass: 'bg-rose-50 text-rose-800 border-rose-200',
   };
 }
+
+/**
+ * Masks a phone number for PII protection.
+ * Examples:
+ *   "+919876543210" -> "+91 98••••••10"
+ *   "9876543210"    -> "98••••••10"
+ */
+export function maskPhoneNumber(phone?: string | null): string {
+  if (!phone) return '';
+  const cleaned = phone.trim();
+  const digits = cleaned.replace(/\D/g, '');
+  if (digits.length < 10) return cleaned;
+
+  const last2 = digits.slice(-2);
+  const first2 = digits.length === 12 && digits.startsWith('91') ? digits.slice(2, 4) : digits.slice(0, 2);
+  const prefix = digits.length === 12 && digits.startsWith('91') ? '+91 ' : (cleaned.startsWith('+91') ? '+91 ' : '');
+
+  return `${prefix}${first2}••••••${last2}`;
+}
+
+/**
+ * Scans a text string for phone numbers (Indian 10-digit, with or without +91 / 0 / spaces / dashes)
+ * and masks them with bullet masks to prevent PII leakage in public text.
+ */
+export function maskPiiInText(text?: string | null): string {
+  if (!text) return '';
+  // Match patterns like +91 9876543210, +91-98765-43210, 09876543210, 9876543210, 98765 43210
+  const phoneRegex = /(?:\+?91[\s.-]?)?(?:0)?([6-9]\d{1})[\s.-]?(\d{3})[\s.-]?(\d{3})[\s.-]?(\d{2})/g;
+  return text.replace(phoneRegex, (_match, p1, _p2, _p3, p4) => {
+    return `${p1}••••••${p4}`;
+  });
+}
+

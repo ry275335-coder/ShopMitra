@@ -5,6 +5,13 @@
 // ==============================================================================
 
 import { createClient } from './client';
+import { 
+  checkOtpRateLimit, 
+  recordOtpRequest, 
+  checkOtpVerifyRateLimit, 
+  recordOtpVerifyFailure, 
+  recordOtpVerifySuccess 
+} from '@/lib/rateLimit';
 
 export type OtpChannel = 'phone' | 'email';
 
@@ -12,6 +19,7 @@ export interface OtpSendResult {
   success: boolean;
   error?: string;
   rateLimited?: boolean;
+  retryAfterSeconds?: number;
 }
 
 export interface OtpVerifyResult {
@@ -21,6 +29,7 @@ export interface OtpVerifyResult {
   expired?: boolean;
   invalid?: boolean;
   tooManyAttempts?: boolean;
+  remainingAttempts?: number;
 }
 
 // ── Send OTP ──────────────────────────────────────────────────────────────────
@@ -32,6 +41,17 @@ export interface OtpVerifyResult {
  * Phone must be in E.164 format: +91XXXXXXXXXX
  */
 export async function sendPhoneOtp(phone: string): Promise<OtpSendResult> {
+  // Rate limit check (60-sec cooldown, max 3 per 10 mins)
+  const rateLimit = checkOtpRateLimit(phone);
+  if (!rateLimit.allowed) {
+    return {
+      success: false,
+      rateLimited: true,
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+      error: rateLimit.message || 'OTP rate limit exceeded.',
+    };
+  }
+
   const supabase = createClient();
   const { error } = await supabase.auth.signInWithOtp({
     phone,
@@ -41,7 +61,10 @@ export async function sendPhoneOtp(phone: string): Promise<OtpSendResult> {
     },
   });
 
-  if (!error) return { success: true };
+  if (!error) {
+    recordOtpRequest(phone);
+    return { success: true };
+  }
 
   return parseOtpSendError(error.message);
 }
@@ -51,6 +74,17 @@ export async function sendPhoneOtp(phone: string): Promise<OtpSendResult> {
  * Uses Supabase's built-in email OTP (no SMTP setup required for hosted Supabase).
  */
 export async function sendEmailOtp(email: string, redirectTo?: string): Promise<OtpSendResult> {
+  // Rate limit check (60-sec cooldown, max 3 per 10 mins)
+  const rateLimit = checkOtpRateLimit(email);
+  if (!rateLimit.allowed) {
+    return {
+      success: false,
+      rateLimited: true,
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+      error: rateLimit.message || 'OTP rate limit exceeded.',
+    };
+  }
+
   const supabase = createClient();
   const siteUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
   const targetRedirect = redirectTo || `${siteUrl}/auth/callback`;
@@ -62,7 +96,10 @@ export async function sendEmailOtp(email: string, redirectTo?: string): Promise<
     },
   });
 
-  if (!error) return { success: true };
+  if (!error) {
+    recordOtpRequest(email);
+    return { success: true };
+  }
 
   return parseOtpSendError(error.message);
 }
@@ -76,6 +113,16 @@ export async function verifyPhoneOtp(
   phone: string,
   token: string
 ): Promise<OtpVerifyResult> {
+  // Brute-force lockout check
+  const verifyLimit = checkOtpVerifyRateLimit(phone);
+  if (!verifyLimit.allowed) {
+    return {
+      success: false,
+      tooManyAttempts: true,
+      error: verifyLimit.message || 'Too many failed attempts. Please try again later.',
+    };
+  }
+
   const supabase = createClient();
   const { data, error } = await supabase.auth.verifyOtp({
     phone,
@@ -84,13 +131,28 @@ export async function verifyPhoneOtp(
   });
 
   if (!error && data.session) {
+    recordOtpVerifySuccess(phone);
     const isNewUser =
       data.user?.created_at &&
       Math.abs(new Date(data.user.created_at).getTime() - Date.now()) < 30000;
     return { success: true, isNewUser: !!isNewUser };
   }
 
-  return parseOtpVerifyError(error?.message || 'Verification failed');
+  const failResult = recordOtpVerifyFailure(phone);
+  if (failResult.locked) {
+    return {
+      success: false,
+      tooManyAttempts: true,
+      error: 'Account locked for 15 minutes due to multiple failed verification attempts.',
+    };
+  }
+
+  const parsed = parseOtpVerifyError(error?.message || 'Verification failed');
+  if (failResult.remainingAttempts <= 3) {
+    parsed.error = `${parsed.error || 'Verification failed.'} (${failResult.remainingAttempts} attempts remaining)`;
+  }
+  parsed.remainingAttempts = failResult.remainingAttempts;
+  return parsed;
 }
 
 /**
@@ -100,6 +162,16 @@ export async function verifyEmailOtp(
   email: string,
   token: string
 ): Promise<OtpVerifyResult> {
+  // Brute-force lockout check
+  const verifyLimit = checkOtpVerifyRateLimit(email);
+  if (!verifyLimit.allowed) {
+    return {
+      success: false,
+      tooManyAttempts: true,
+      error: verifyLimit.message || 'Too many failed attempts. Please try again later.',
+    };
+  }
+
   const supabase = createClient();
   const { data, error } = await supabase.auth.verifyOtp({
     email,
@@ -108,13 +180,28 @@ export async function verifyEmailOtp(
   });
 
   if (!error && data.session) {
+    recordOtpVerifySuccess(email);
     const isNewUser =
       data.user?.created_at &&
       Math.abs(new Date(data.user.created_at).getTime() - Date.now()) < 30000;
     return { success: true, isNewUser: !!isNewUser };
   }
 
-  return parseOtpVerifyError(error?.message || 'Verification failed');
+  const failResult = recordOtpVerifyFailure(email);
+  if (failResult.locked) {
+    return {
+      success: false,
+      tooManyAttempts: true,
+      error: 'Account locked for 15 minutes due to multiple failed verification attempts.',
+    };
+  }
+
+  const parsed = parseOtpVerifyError(error?.message || 'Verification failed');
+  if (failResult.remainingAttempts <= 3) {
+    parsed.error = `${parsed.error || 'Verification failed.'} (${failResult.remainingAttempts} attempts remaining)`;
+  }
+  parsed.remainingAttempts = failResult.remainingAttempts;
+  return parsed;
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
