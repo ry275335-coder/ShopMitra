@@ -73,6 +73,15 @@ export async function checkMerchantProfileAction(
 ): Promise<{ exists: boolean; verificationStatus?: string }> {
   try {
     const supabase = await createServerSupabase();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { exists: false };
+
+    // Strictly limit inquiries about other users to administrators
+    if (user.id !== userId) {
+      const { verifyAdminCaller } = await import('./admin.actions');
+      const adminAuth = await verifyAdminCaller('moderator');
+      if (!adminAuth.authorized) return { exists: false };
+    }
 
     const { data, error } = await supabase
       .from('merchants')
@@ -126,10 +135,26 @@ export async function getAuthUserRoleAction(): Promise<{
 /**
  * Robust server action to retrieve unified account status bypassing client RLS constraints.
  * Uses service role to reliably detect customer, merchant, and shop records.
+ * Securely enforces session authentication: callers may only retrieve their own account
+ * or must possess verified administrative credentials.
  */
 export async function getUserAccountStatusAction(userId: string) {
   try {
-    const { createAdminSupabase } = await import('@/lib/supabase/server');
+    const { getAuthenticatedUser, createAdminSupabase } = await import('@/lib/supabase/server');
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return null;
+    }
+
+    // Only allow caller to fetch their own account status, unless they are an admin
+    if (user.id !== userId) {
+      const { verifyAdminCaller } = await import('./admin.actions');
+      const adminAuth = await verifyAdminCaller('moderator');
+      if (!adminAuth.authorized) {
+        return null;
+      }
+    }
+
     const admin = createAdminSupabase();
 
     const [profRes, custRes, merchRes, adminRes] = await Promise.all([

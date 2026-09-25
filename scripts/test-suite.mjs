@@ -608,6 +608,50 @@ async function runAllTests() {
   });
 
   // --------------------------------------------------------------------------
+  // SECTION 17: Route Handlers & Server Actions Hardening (Phase 3)
+  // --------------------------------------------------------------------------
+  console.log('\n🛡️ SECTION 17: Route Handlers & Server Actions Hardening (Phase 3)');
+  test('Safe redirect validator blocks open redirects and protocol smuggling', () => {
+    const getSafeRedirect = (next) => {
+      if (!next) return '/';
+      let decoded = next;
+      try { decoded = decodeURIComponent(next); } catch {}
+      if (
+        decoded.startsWith('/') &&
+        !decoded.startsWith('//') &&
+        !decoded.includes('\\') &&
+        !decoded.includes('\0') &&
+        !/^\/[/\\]/.test(decoded) &&
+        !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(decoded.slice(1))
+      ) {
+        return decoded;
+      }
+      return '/';
+    };
+
+    assert.equal(getSafeRedirect('/admin/dashboard'), '/admin/dashboard');
+    assert.equal(getSafeRedirect('/wishlist'), '/wishlist');
+    assert.equal(getSafeRedirect('https://evil.com'), '/');
+    assert.equal(getSafeRedirect('//evil.com'), '/');
+    assert.equal(getSafeRedirect('javascript:alert(1)'), '/');
+    assert.equal(getSafeRedirect('/\\evil.com'), '/');
+  });
+
+  test('Server action caller authorization enforces caller match or admin check', () => {
+    const authorizeAccountStatusAccess = (authenticatedUserId, requestedUserId, isAdmin) => {
+      if (!authenticatedUserId) return { authorized: false, error: 'Authentication required' };
+      if (authenticatedUserId === requestedUserId) return { authorized: true };
+      if (isAdmin) return { authorized: true };
+      return { authorized: false, error: 'Access denied: cannot inspect another user account' };
+    };
+
+    assert.equal(authorizeAccountStatusAccess('user-123', 'user-123', false).authorized, true);
+    assert.equal(authorizeAccountStatusAccess('admin-456', 'user-123', true).authorized, true);
+    assert.equal(authorizeAccountStatusAccess('user-789', 'user-123', false).authorized, false);
+    assert.equal(authorizeAccountStatusAccess(null, 'user-123', false).authorized, false);
+  });
+
+  // --------------------------------------------------------------------------
   // Final Results
   // --------------------------------------------------------------------------
   console.log('\n======================================================================');

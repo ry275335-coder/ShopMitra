@@ -151,7 +151,7 @@ export async function middleware(request: NextRequest) {
     // Check merchant role and active account status
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, is_active, status')
+      .select('role, is_active')
       .eq('id', user.id)
       .single();
 
@@ -159,7 +159,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/?auth=unauthorized', request.url));
     }
 
-    if (profile.is_active === false || profile.status === 'suspended') {
+    if (profile.is_active === false) {
       return NextResponse.redirect(new URL('/?auth=suspended', request.url));
     }
   }
@@ -171,11 +171,11 @@ export async function middleware(request: NextRequest) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('is_active, status')
+      .select('is_active')
       .eq('id', user.id)
       .single();
 
-    if (profile && (profile.is_active === false || profile.status === 'suspended')) {
+    if (profile && profile.is_active === false) {
       return NextResponse.redirect(new URL('/?auth=suspended', request.url));
     }
   }

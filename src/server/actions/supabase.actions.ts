@@ -10,6 +10,12 @@ import path from 'path';
 import { createClient } from '@supabase/supabase-js';
 
 export async function testSupabaseConnectionAction(url: string, anonKey: string): Promise<{ success: boolean; message: string; schemaReady?: boolean }> {
+  const { verifyAdminCaller } = await import('./admin.actions');
+  const auth = await verifyAdminCaller('super_admin');
+  if (!auth.authorized) {
+    return { success: false, message: 'Unauthorized: Super admin privileges required to test connections.' };
+  }
+
   if (!url || !anonKey) {
     return { success: false, message: 'URL and Anon Key are required.' };
   }
@@ -40,6 +46,12 @@ export async function testSupabaseConnectionAction(url: string, anonKey: string)
 }
 
 export async function saveSupabaseCredentialsAction(url: string, anonKey: string) {
+  const { verifyAdminCaller } = await import('./admin.actions');
+  const auth = await verifyAdminCaller('super_admin');
+  if (!auth.authorized) {
+    return { success: false, error: 'Unauthorized: Super admin privileges required to configure credentials.' };
+  }
+
   // Production requirement: NEVER allow filesystem configuration mutation in production
   if (process.env.NODE_ENV === 'production') {
     return { success: false, error: 'Security Violation: Configuration mutation is disabled in production.' };
