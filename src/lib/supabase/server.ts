@@ -18,7 +18,13 @@ function cleanEnvString(val?: string): string {
 function isValidServiceRoleKey(key?: string): boolean {
   if (!key) return false;
   const clean = cleanEnvString(key);
-  return clean.startsWith('eyJ') && clean.split('.').length === 3 && !clean.includes('placeholder');
+  if (clean.includes('placeholder') || clean.includes('your-') || clean.length < 20) {
+    return false;
+  }
+  // Supports both modern Supabase Secret Keys (e.g. sb_secret_... / sb_s...) and legacy JWTs (eyJ...)
+  const isModernSecretKey = clean.startsWith('sb_');
+  const isLegacyJwt = clean.startsWith('eyJ') && clean.split('.').length === 3;
+  return isModernSecretKey || isLegacyJwt;
 }
 
 export async function createServerSupabase() {
