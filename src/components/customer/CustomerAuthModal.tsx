@@ -24,6 +24,7 @@ import {
   upsertCustomerRecord,
   checkAccountExistsInDatabase,
 } from '@/lib/supabase/profile';
+import { reverseGeocodeCoordinates } from '@/lib/geo';
 import { getStoredCounterHolds } from '@/lib/counterHolds';
 import {
   User,
@@ -117,6 +118,8 @@ export function CustomerAuthModal({
     exists: boolean;
     byPhone: boolean;
     byEmail: boolean;
+    role?: string | null;
+    nameHint?: string;
     message?: string;
   } | null>(null);
 
@@ -157,12 +160,16 @@ export function CustomerAuthModal({
           const sources = [];
           if (res.phoneExists) sources.push('Phone');
           if (res.emailExists) sources.push('Email');
+          const greeting = res.nameHint ? `Welcome back, ${res.nameHint}! ` : '';
+          const roleLabel = res.role === 'merchant' ? 'merchant' : 'customer';
           setDbDetection({
             checked: true,
             exists: true,
             byPhone: res.phoneExists,
             byEmail: res.emailExists,
-            message: `Existing account detected in database via ${sources.join(' & ')}! OTP will sign you in directly.`,
+            role: res.role,
+            nameHint: res.nameHint,
+            message: `${greeting}Registered ${roleLabel} account detected via ${sources.join(' & ')}! OTP will sign you in directly.`,
           });
         } else {
           setDbDetection({
@@ -170,13 +177,13 @@ export function CustomerAuthModal({
             exists: false,
             byPhone: false,
             byEmail: false,
-            message: `New account: Both Phone and Email will be saved to your database profile.`,
+            message: `New account: Verification code will activate your ShopMitra profile.`,
           });
         }
       } catch {
         setDbDetection(null);
       }
-    }, 450);
+    }, 350);
 
     return () => clearTimeout(timer);
   }, [phone, email]);
@@ -209,7 +216,10 @@ export function CustomerAuthModal({
 
   useEffect(() => {
     if (userLocation?.name && !city) {
-      setCity(userLocation.name.split(',')[0].trim());
+      const loc = userLocation.name.toLowerCase().includes('live location') 
+        ? '' 
+        : userLocation.name.split(',')[0].trim();
+      if (loc) setCity(loc);
     }
     setLat(userLocation.lat);
     setLng(userLocation.lng);
@@ -363,9 +373,15 @@ export function CustomerAuthModal({
               role: 'customer',
             });
 
+            const cleanLocation = city.trim() && !city.toLowerCase().includes('live location')
+              ? city.trim()
+              : !userLocation.name.toLowerCase().includes('live location')
+              ? userLocation.name
+              : 'Current Area';
+
             await upsertCustomerRecord(user.id, {
               mobile: finalPhone,
-              defaultLocationName: city.trim() || address.trim() || userLocation.name,
+              defaultLocationName: cleanLocation,
             });
 
             await refreshAccountStatus();
@@ -465,10 +481,14 @@ export function CustomerAuthModal({
         role: 'customer',
       });
 
+      const cleanLocation = city.trim() && !city.toLowerCase().includes('live location')
+        ? city.trim()
+        : address.trim() || (!userLocation.name.toLowerCase().includes('live location') ? userLocation.name : 'Current Area');
+
       // Upsert customer record into Supabase customers table
       await upsertCustomerRecord(user.id, {
         mobile: fullPhone,
-        defaultLocationName: city.trim() || address.trim() || userLocation.name,
+        defaultLocationName: cleanLocation,
       });
 
       await refreshAccountStatus();
@@ -530,15 +550,10 @@ export function CustomerAuthModal({
           setLng(pos.coords.longitude);
           setIsGpsPinned(true);
           try {
-            const res = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&localityLanguage=en`
-            );
-            if (res.ok) {
-              const d = await res.json();
-              const detectedCity = d.city || d.locality || '';
-              if (detectedCity) setCity(detectedCity);
-              showToast(`📍 GPS pinned at ${detectedCity || 'your location'}!`);
-            }
+            const geo = await reverseGeocodeCoordinates(pos.coords.latitude, pos.coords.longitude);
+            const detectedLoc = geo.name;
+            if (detectedLoc) setCity(detectedLoc);
+            showToast(`📍 Exact location detected: ${detectedLoc}!`);
           } catch {}
           setIsLocatingGps(false);
         },
@@ -550,9 +565,10 @@ export function CustomerAuthModal({
               if (d?.success) {
                 setLat(d.latitude);
                 setLng(d.longitude);
-                if (d.city) setCity(d.city);
+                const locName = `${d.city || ''}, ${d.region_code || d.region || ''}`.replace(/^,\s*|,\s*$/g, '') || d.city || 'Detected Area';
+                if (locName) setCity(locName);
                 setIsGpsPinned(true);
-                showToast(`📍 Located via network at ${d.city || 'your area'}!`);
+                showToast(`📍 Located via network: ${locName}!`);
               }
             }
           } catch {}
@@ -1026,6 +1042,18 @@ export function CustomerAuthModal({
                     </div>
                   )}
 
+                  {/* Real-time Account Detection Badge */}
+                  {dbDetection && (
+                    <div className={`p-2.5 rounded-xl border text-[11px] font-semibold flex items-center space-x-2 animate-in fade-in duration-200 ${
+                      dbDetection.exists
+                        ? 'bg-blue-50 border-blue-200 text-blue-800'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    }`}>
+                      <ShieldCheck className="w-4 h-4 shrink-0 text-brand-600" />
+                      <span>{dbDetection.message}</span>
+                    </div>
+                  )}
+
                   {error && (
                     <div className="flex items-start space-x-2 p-3 bg-red-50 rounded-xl border border-red-200">
                       <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
@@ -1045,7 +1073,11 @@ export function CustomerAuthModal({
                       </>
                     ) : (
                       <>
-                        <span>Send Verification Code</span>
+                        <span>
+                          {dbDetection?.exists 
+                            ? 'Sign In via Verification Code' 
+                            : 'Send Verification Code'}
+                        </span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}

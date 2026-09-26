@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from './AppContext';
-import { POPULAR_MARKET_PRESETS } from '@/lib/geo';
+import { POPULAR_MARKET_PRESETS, reverseGeocodeCoordinates } from '@/lib/geo';
 import { 
   MapPin, 
   Search, 
@@ -330,20 +330,6 @@ export function Header({
     return false;
   };
 
-  const reverseGeocodeName = async (lat: number, lng: number): Promise<string> => {
-    try {
-      const res = await fetch(
-        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`
-      );
-      if (res.ok) {
-        const d = await res.json();
-        const parts = [d.locality || d.city, d.principalSubdivision].filter(Boolean);
-        if (parts.length > 0) return parts.join(', ');
-      }
-    } catch {}
-    return 'GPS Pinpoint Location';
-  };
-
   const handleGpsDetect = async () => {
     setIsLocating(true);
     showToast('📡 Detecting your physical location...', 'info');
@@ -368,7 +354,8 @@ export function Header({
         async (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          const name = await reverseGeocodeName(lat, lng);
+          const geo = await reverseGeocodeCoordinates(lat, lng);
+          const name = geo.name;
           setUserLocation(prev => ({
             ...prev,
             lat,
@@ -377,7 +364,7 @@ export function Header({
           }));
           setIsLocating(false);
           setShowLocationDropdown(false);
-          showToast(`📍 Exact GPS location detected: ${name}!`);
+          showToast(`📍 Exact location detected: ${name}!`);
         },
         async (err) => {
           console.warn('Browser geolocation failed or was denied, trying IP fallback:', err);

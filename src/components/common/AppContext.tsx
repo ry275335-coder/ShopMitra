@@ -8,7 +8,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { UserRole, UserLocation, MasterProduct, Shop, ShopProductRate, PriceAlert, CustomerUser } from '@/types';
-import { DEFAULT_USER_LOCATION, parsePostGisPoint } from '@/lib/geo';
+import { DEFAULT_USER_LOCATION, parsePostGisPoint, reverseGeocodeCoordinates } from '@/lib/geo';
 import { useToast } from '@/components/ui/Toast';
 import { fetchDbShops, fetchDbCustomers, insertDbShop } from '@/lib/supabase/db';
 import { createClient } from '@/lib/supabase/client';
@@ -235,7 +235,9 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
           : (status.merchant?.ownerName || (user.phone || (user.email ? user.email.split('@')[0] : 'Customer'))),
         mobile: status.customer?.mobile || profile?.phone || user.phone || status.merchant?.mobile || '',
         email: profile?.email || user.email || '',
-        city: status.customer?.defaultLocationName || '',
+        city: (status.customer?.defaultLocationName && !status.customer.defaultLocationName.toLowerCase().includes('live location'))
+          ? status.customer.defaultLocationName
+          : userLocation.name.split(',')[0].trim(),
         address: '',
         lat: userLocation.lat,
         lng: userLocation.lng,
@@ -457,7 +459,20 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       if (savedLocation) {
         try {
           const parsed = JSON.parse(savedLocation);
-          if (parsed?.lat && parsed?.lng) setUserLocation(parsed);
+          if (parsed?.lat && parsed?.lng) {
+            // If parsed name is generic placeholder 'My Live Location', re-geocode it accurately
+            if (!parsed.name || parsed.name.toLowerCase().includes('live location') || parsed.name.toLowerCase().includes('pinpoint')) {
+              reverseGeocodeCoordinates(parsed.lat, parsed.lng).then((geo) => {
+                setUserLocation((prev) => {
+                  const updated = { ...prev, lat: parsed.lat, lng: parsed.lng, name: geo.name };
+                  try { localStorage.setItem('shopmitra_user_location', JSON.stringify(updated)); } catch {}
+                  return updated;
+                });
+              });
+            } else {
+              setUserLocation(parsed);
+            }
+          }
         } catch {}
       }
 
@@ -475,20 +490,14 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         }
       }).catch((err) => console.log('Supabase shops fetch note:', err));
 
-      // GPS auto-detect
+      // GPS auto-detect with high precision
       if (typeof window !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const lat = pos.coords.latitude;
             const lng = pos.coords.longitude;
-            let name = 'My Live Location';
-            try {
-              const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`);
-              if (res.ok) {
-                const d = await res.json();
-                name = d.locality || d.city || name;
-              }
-            } catch {}
+            const geo = await reverseGeocodeCoordinates(lat, lng);
+            const name = geo.name;
             setUserLocation((prev) => {
               const next = { ...prev, lat, lng, name };
               try { localStorage.setItem('shopmitra_user_location', JSON.stringify(next)); } catch {}
@@ -496,14 +505,16 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
             });
           },
           async () => {
-            if (!localStorage.getItem('shopmitra_user_location')) {
+            const curSaved = localStorage.getItem('shopmitra_user_location');
+            if (!curSaved || curSaved.includes('Live Location')) {
               try {
                 const res = await fetch('https://ipwho.is/');
                 if (res.ok) {
                   const d = await res.json();
                   if (d?.success && d.latitude && d.longitude) {
+                    const locName = `${d.city || ''}, ${d.region_code || d.region || ''}`.replace(/^,\s*|,\s*$/g, '') || 'Detected Area';
                     setUserLocation((prev) => {
-                      const next = { ...prev, lat: d.latitude, lng: d.longitude, name: `${d.city || 'My City'} (Network Location)` };
+                      const next = { ...prev, lat: d.latitude, lng: d.longitude, name: locName };
                       try { localStorage.setItem('shopmitra_user_location', JSON.stringify(next)); } catch {}
                       return next;
                     });

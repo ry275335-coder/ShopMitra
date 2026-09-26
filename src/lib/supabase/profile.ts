@@ -454,8 +454,29 @@ export async function checkAccountExistsInDatabase(params: {
   exists: boolean;
   phoneExists: boolean;
   emailExists: boolean;
+  role?: 'customer' | 'merchant' | 'admin' | null;
+  nameHint?: string;
   profile?: ProfileData | null;
 }> {
+  // 1. Try server action first for 100% reliable bypass of client-side RLS
+  try {
+    const { checkAccountExistsAction } = await import('@/server/actions/auth.actions');
+    const serverResult = await checkAccountExistsAction(params);
+    if (serverResult) {
+      return {
+        exists: serverResult.exists,
+        phoneExists: serverResult.phoneExists,
+        emailExists: serverResult.emailExists,
+        role: serverResult.role,
+        nameHint: serverResult.nameHint,
+        profile: null,
+      };
+    }
+  } catch (err) {
+    console.warn('checkAccountExistsAction server call fallback:', err);
+  }
+
+  // 2. Client-side fallback
   const supabase = createClient();
   const cleanPhone = params.phone ? params.phone.replace(/\D/g, '').slice(-10) : '';
   const cleanEmail = params.email ? params.email.trim().toLowerCase() : '';

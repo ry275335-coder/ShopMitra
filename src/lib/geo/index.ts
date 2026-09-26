@@ -223,3 +223,126 @@ export function parsePostGisPoint(location: any): { lat: number; lng: number } {
   return { lat: 28.6328, lng: 77.2195 };
 }
 
+/**
+ * High-precision reverse geocoding utility.
+ * Resolves exact neighbourhood, market, suburb, or city name for coordinates.
+ * Multi-layer provider fallback: Nominatim -> BigDataCloud -> Nearest Preset.
+ * Guaranteed to never return placeholder strings like "My Live Location".
+ */
+export async function reverseGeocodeCoordinates(
+  lat: number,
+  lng: number
+): Promise<{
+  name: string;
+  city: string;
+  locality?: string;
+  fullAddress?: string;
+}> {
+  // 1. Primary: OpenStreetMap Nominatim for exact neighbourhood / suburb / street
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+      {
+        headers: {
+          'Accept-Language': 'en',
+          'User-Agent': 'ShopMitra-App/1.0',
+        },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const d = await res.json();
+      const a = d.address || {};
+      const neighbourhood =
+        a.suburb ||
+        a.neighbourhood ||
+        a.residential ||
+        a.subdistrict ||
+        a.quarter ||
+        a.commercial;
+      const road = a.road || a.pedestrian || a.marketplace;
+      const local = neighbourhood || road;
+      const city =
+        a.city ||
+        a.town ||
+        a.village ||
+        a.city_district ||
+        a.county ||
+        a.state_district;
+      const state = a.state;
+
+      const parts: string[] = [];
+      if (local) parts.push(local);
+      if (city && city !== local) parts.push(city);
+      else if (state && state !== local && parts.length === 0) parts.push(state);
+
+      if (parts.length > 0) {
+        return {
+          name: parts.join(', '),
+          city: city || local || state || 'Current Area',
+          locality: local,
+          fullAddress: d.display_name,
+        };
+      }
+    }
+  } catch {}
+
+  // 2. Secondary: BigDataCloud Reverse Geocode Client API
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const d = await res.json();
+      const local = d.locality || '';
+      const city = d.city || '';
+      const state = d.principalSubdivision || '';
+
+      const parts: string[] = [];
+      if (local) parts.push(local);
+      if (city && city !== local) parts.push(city);
+      else if (state && state !== local && parts.length === 0) parts.push(state);
+
+      if (parts.length > 0) {
+        return {
+          name: parts.join(', '),
+          city: city || local || state || 'Current Area',
+          locality: local,
+        };
+      }
+    }
+  } catch {}
+
+  // 3. Tertiary: Find closest popular market preset if within 5 km
+  let closestPreset: { name: string; city: string; distance: number } | null = null;
+  for (const preset of POPULAR_MARKET_PRESETS) {
+    const dist = calculateHaversineDistance(lat, lng, preset.lat, preset.lng);
+    if (dist <= 5 && (!closestPreset || dist < closestPreset.distance)) {
+      closestPreset = { name: preset.name, city: preset.city, distance: dist };
+    }
+  }
+
+  if (closestPreset) {
+    return {
+      name: closestPreset.name,
+      city: closestPreset.city,
+    };
+  }
+
+  // 4. Safe fallback with human-readable coordinates
+  return {
+    name: `Area near ${lat.toFixed(3)}, ${lng.toFixed(3)}`,
+    city: 'Current Area',
+  };
+}
+
+

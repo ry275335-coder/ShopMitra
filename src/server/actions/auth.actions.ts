@@ -6,7 +6,7 @@
 
 'use server';
 
-import { createServerSupabase } from '@/lib/supabase/server';
+import { createServerSupabase, createAdminSupabase } from '@/lib/supabase/server';
 
 export interface CreateProfileInput {
   userId: string;
@@ -267,4 +267,155 @@ export async function getUserAccountStatusAction(userId: string) {
     return null;
   }
 }
+
+/**
+ * Public existence detection for customer auth onboarding.
+ * Uses service role to reliably check if a phone number or email is already registered.
+ * Strictly returns boolean flags and safe metadata to prevent PII harvesting.
+ */
+export async function checkAccountExistsAction(params: {
+  phone?: string;
+  email?: string;
+}): Promise<{
+  exists: boolean;
+  phoneExists: boolean;
+  emailExists: boolean;
+  role?: 'customer' | 'merchant' | 'admin' | null;
+  nameHint?: string;
+}> {
+  try {
+    const admin = createAdminSupabase();
+    const cleanPhone = params.phone ? params.phone.replace(/\D/g, '').slice(-10) : '';
+    const cleanEmail = params.email ? params.email.trim().toLowerCase() : '';
+
+    if (!cleanPhone && !cleanEmail) {
+      return { exists: false, phoneExists: false, emailExists: false };
+    }
+
+    let phoneExists = false;
+    let emailExists = false;
+    let detectedRole: 'customer' | 'merchant' | 'admin' | null = null;
+    let detectedName = '';
+
+    if (cleanPhone && cleanPhone.length >= 10) {
+      const [profRes, custRes, merchRes] = await Promise.all([
+        admin.from('profiles').select('id, role, full_name').ilike('phone', `%${cleanPhone}%`).limit(1),
+        admin.from('customers').select('id, profile_id').ilike('mobile', `%${cleanPhone}%`).limit(1),
+        admin.from('merchants').select('id, profile_id, owner_name').ilike('mobile', `%${cleanPhone}%`).limit(1),
+      ]);
+
+      if (
+        (profRes.data && profRes.data.length > 0) ||
+        (custRes.data && custRes.data.length > 0) ||
+        (merchRes.data && merchRes.data.length > 0)
+      ) {
+        phoneExists = true;
+        if (profRes.data && profRes.data.length > 0) {
+          detectedRole = profRes.data[0].role as any;
+          if (profRes.data[0].full_name && profRes.data[0].full_name !== 'Shopper') {
+            detectedName = profRes.data[0].full_name;
+          }
+        } else if (custRes.data && custRes.data.length > 0) {
+          detectedRole = 'customer';
+        } else if (merchRes.data && merchRes.data.length > 0) {
+          detectedRole = 'merchant';
+          if (merchRes.data[0].owner_name) {
+            detectedName = merchRes.data[0].owner_name;
+          }
+        }
+      }
+    }
+
+    if (cleanEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      const { data: emailProfiles } = await admin
+        .from('profiles')
+        .select('id, role, full_name')
+        .ilike('email', cleanEmail)
+        .limit(1);
+
+      if (emailProfiles && emailProfiles.length > 0) {
+        emailExists = true;
+        if (!detectedRole) {
+          detectedRole = emailProfiles[0].role as any;
+        }
+        if (!detectedName && emailProfiles[0].full_name && emailProfiles[0].full_name !== 'Shopper') {
+          detectedName = emailProfiles[0].full_name;
+        }
+      }
+    }
+
+    const nameHint = detectedName ? detectedName.trim().split(' ')[0] : undefined;
+
+    return {
+      exists: phoneExists || emailExists,
+      phoneExists,
+      emailExists,
+      role: detectedRole,
+      nameHint,
+    };
+  } catch (err) {
+    console.error('checkAccountExistsAction error:', err);
+    return { exists: false, phoneExists: false, emailExists: false };
+  }
+}
+
+/**
+ * Merchant POS lookup: detect existing customer by phone number to auto-fill counter billing.
+ */
+export async function lookupCustomerByPhoneAction(
+  rawPhone: string
+): Promise<{ found: boolean; customerName?: string; customerMobile?: string }> {
+  try {
+    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return { found: false };
+    }
+
+    const admin = createAdminSupabase();
+
+    // 1. Check customers table and join profile
+    const { data: customerData } = await admin
+      .from('customers')
+      .select('profile_id, mobile')
+      .ilike('mobile', `%${cleanPhone}%`)
+      .limit(1);
+
+    if (customerData && customerData.length > 0 && customerData[0].profile_id) {
+      const { data: profile } = await admin
+        .from('profiles')
+        .select('full_name')
+        .eq('id', customerData[0].profile_id)
+        .maybeSingle();
+
+      const name = profile?.full_name && profile.full_name !== 'Shopper' ? profile.full_name : '';
+      return {
+        found: true,
+        customerName: name,
+        customerMobile: customerData[0].mobile || cleanPhone,
+      };
+    }
+
+    // 2. Check profiles table directly by phone
+    const { data: profileData } = await admin
+      .from('profiles')
+      .select('full_name, phone')
+      .ilike('phone', `%${cleanPhone}%`)
+      .limit(1);
+
+    if (profileData && profileData.length > 0) {
+      const name = profileData[0].full_name && profileData[0].full_name !== 'Shopper' ? profileData[0].full_name : '';
+      return {
+        found: true,
+        customerName: name,
+        customerMobile: profileData[0].phone || cleanPhone,
+      };
+    }
+
+    return { found: false };
+  } catch (err) {
+    console.error('lookupCustomerByPhoneAction error:', err);
+    return { found: false };
+  }
+}
+
 

@@ -17,6 +17,7 @@ import { ShopProduct, MasterProduct, Shop } from '@/types';
 import { fetchDbProducts, fetchDbShopProducts } from '@/lib/supabase/db';
 import { createClient } from '@/lib/supabase/client';
 import { uploadShopImageAction } from '@/server/actions/upload.actions';
+import { reverseGeocodeCoordinates } from '@/lib/geo';
 import { 
   Store, 
   PlusCircle, 
@@ -286,24 +287,19 @@ export function MerchantDashboardView({
         async (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          let detectedCity = editForm.city;
+          let detectedLocation = editForm.city;
           try {
-            const res = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`
-            );
-            if (res.ok) {
-              const d = await res.json();
-              if (d.city || d.locality) detectedCity = d.city || d.locality;
-            }
+            const geo = await reverseGeocodeCoordinates(lat, lng);
+            detectedLocation = geo.name;
           } catch {}
           setEditForm(prev => ({
             ...prev,
             lat,
             lng,
-            city: detectedCity || prev.city,
+            city: detectedLocation || prev.city,
           }));
           setIsDetectingLoc(false);
-          showToast(`📍 Counter pinned at ${detectedCity} (${lat.toFixed(4)}, ${lng.toFixed(4)})!`);
+          showToast(`📍 Counter pinned at ${detectedLocation}!`);
         },
         async () => {
           try {

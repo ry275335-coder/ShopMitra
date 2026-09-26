@@ -11,6 +11,7 @@ import { useApp } from '@/components/common/AppContext';
 import { becomeMerchantAction } from '@/server/actions/merchant.actions';
 import { createClient } from '@/lib/supabase/client';
 import { SEED_CATEGORIES } from '@/lib/data/store';
+import { reverseGeocodeCoordinates } from '@/lib/geo';
 import {
   sendPhoneOtp,
   sendEmailOtp,
@@ -330,17 +331,14 @@ export function MerchantOnboardingModal({
     if (typeof window !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
-          let city = form.city;
+          let exactLocation = form.city;
           try {
-            const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&localityLanguage=en`);
-            if (res.ok) {
-              const d = await res.json();
-              if (d.city || d.locality) city = d.city || d.locality;
-            }
+            const geo = await reverseGeocodeCoordinates(pos.coords.latitude, pos.coords.longitude);
+            exactLocation = geo.name;
           } catch {}
-          setForm((prev) => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude, city: city || prev.city }));
+          setForm((prev) => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude, city: exactLocation || prev.city }));
           setIsPinningGps(false);
-          showToast(`📍 Pinned at ${city}!`);
+          showToast(`📍 Pinned at ${exactLocation}!`);
         },
         async () => {
           try {
@@ -348,8 +346,9 @@ export function MerchantOnboardingModal({
             if (res.ok) {
               const d = await res.json();
               if (d?.success) {
-                setForm((prev) => ({ ...prev, lat: d.latitude, lng: d.longitude, city: d.city || prev.city }));
-                showToast(`📍 Pinned via network at ${d.city || 'local area'}!`);
+                const locName = `${d.city || ''}, ${d.region_code || d.region || ''}`.replace(/^,\s*|,\s*$/g, '') || d.city;
+                setForm((prev) => ({ ...prev, lat: d.latitude, lng: d.longitude, city: locName || prev.city }));
+                showToast(`📍 Pinned via network at ${locName || 'local area'}!`);
               }
             }
           } catch {}

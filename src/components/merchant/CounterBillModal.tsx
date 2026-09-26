@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Receipt,
   X,
@@ -59,6 +59,7 @@ export function CounterBillModal({
   const [billItems, setBillItems] = useState<BillItem[]>([]);
   const [customerMobile, setCustomerMobile] = useState<string>('');
   const [customerName, setCustomerName] = useState<string>('');
+  const [detectedCustomer, setDetectedCustomer] = useState<{ found: boolean; name?: string } | null>(null);
   const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [gstRate, setGstRate] = useState<number>(0);
   const [paymentMode, setPaymentMode] = useState<'upi' | 'cash' | 'card'>('upi');
@@ -78,6 +79,33 @@ export function CounterBillModal({
         (item.brand && item.brand.toLowerCase().includes(q))
     );
   }, [inventory, searchFilter]);
+
+  // Auto-detect customer details when merchant enters customer mobile
+  useEffect(() => {
+    const raw = customerMobile.replace(/\D/g, '').slice(-10);
+    if (raw.length < 10) {
+      setDetectedCustomer(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const { lookupCustomerByPhoneAction } = await import('@/server/actions/auth.actions');
+        const res = await lookupCustomerByPhoneAction(raw);
+        if (res.found && res.customerName) {
+          setDetectedCustomer({ found: true, name: res.customerName });
+          setCustomerName((prev) => (!prev.trim() ? res.customerName! : prev));
+          showToast(`👤 Found customer: ${res.customerName}`, 'info');
+        } else {
+          setDetectedCustomer({ found: false });
+        }
+      } catch {
+        setDetectedCustomer(null);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [customerMobile, showToast]);
 
   // Financial Calculations
   const calculations = useMemo(() => {
@@ -382,32 +410,41 @@ export function CounterBillModal({
             </div>
 
             {/* Customer Contact Details */}
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                  Customer Mobile (for WhatsApp Bill)
-                </label>
-                <input
-                  type="tel"
-                  value={customerMobile}
-                  onChange={(e) => setCustomerMobile(e.target.value)}
-                  placeholder="e.g. 9820198201"
-                  className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold outline-none"
-                />
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                    Customer Mobile (for WhatsApp Bill)
+                  </label>
+                  <input
+                    type="tel"
+                    value={customerMobile}
+                    onChange={(e) => setCustomerMobile(e.target.value)}
+                    placeholder="e.g. 9820198201"
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                    Customer Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="e.g. Rahul Sharma"
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold outline-none"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                  Customer Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="e.g. Rahul Sharma"
-                  className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold outline-none"
-                />
-              </div>
+              {detectedCustomer?.found && detectedCustomer.name && (
+                <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg text-[11px] text-emerald-800 dark:text-emerald-300 font-semibold animate-in fade-in">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>Verified Customer: <strong>{detectedCustomer.name}</strong></span>
+                </div>
+              )}
             </div>
           </div>
 
