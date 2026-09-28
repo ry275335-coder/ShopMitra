@@ -72,9 +72,6 @@ export async function upsertProfile(
   const supabase = createClient();
 
   // Security: never allow client to set admin role
-  const safeRole =
-    data.role === 'merchant' ? 'merchant' : 'customer';
-
   const payload: Record<string, any> = {
     id: userId,
     updated_at: new Date().toISOString(),
@@ -82,7 +79,6 @@ export async function upsertProfile(
   if (data.email !== undefined) payload.email = data.email;
   if (data.phone !== undefined) payload.phone = data.phone;
   if (data.fullName !== undefined) payload.full_name = data.fullName;
-  if (data.role !== undefined) payload.role = safeRole;
   if (data.avatarUrl !== undefined) payload.avatar_url = data.avatarUrl;
 
   const { data: result, error } = await supabase

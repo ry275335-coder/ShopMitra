@@ -226,17 +226,19 @@ export async function fetchDbShops(): Promise<Shop[]> {
 
 export async function insertDbShop(shop: Partial<Shop> & { businessId?: string; lat?: number; lng?: number }): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
-    let businessId = shop.businessId;
-    // If businessId is not provided or not a valid UUID, find an existing business or create one
+    const businessId = shop.businessId;
     if (!businessId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(businessId)) {
-      const { data: bizList } = await dbClient.from('businesses').select('id').limit(1);
-      if (bizList && bizList.length > 0) {
-        businessId = bizList[0].id;
-      }
+      return { success: false, error: 'A valid businessId UUID is required to link a shop' };
     }
 
-    if (!businessId) {
-      return { success: false, error: 'No valid business entity found to link shop' };
+    const { data: biz, error: bizErr } = await dbClient
+      .from('businesses')
+      .select('id')
+      .eq('id', businessId)
+      .single();
+
+    if (bizErr || !biz) {
+      return { success: false, error: `Referenced business entity not found: ${bizErr?.message || 'Invalid business'}` };
     }
 
     const lat = Number(shop.lat) || 28.6328;
@@ -330,20 +332,26 @@ export async function fetchDbCustomers(): Promise<CustomerUser[]> {
   }
 }
 
-export async function insertDbCustomer(customer: Partial<CustomerUser>): Promise<{ success: boolean; data?: any; error?: string }> {
+export async function insertDbCustomer(customer: Partial<CustomerUser> & { profileId?: string; profile_id?: string }): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    const profileId = customer.profileId || customer.profile_id;
+    if (!profileId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId)) {
+      return { success: false, error: 'A valid profile_id is required to register a customer' };
+    }
+
     const row = {
-      mobile: customer.mobile,
+      profile_id: profileId,
+      mobile: customer.mobile || null,
       preferred_language: 'en',
     };
 
     const { data, error } = await dbClient
       .from('customers')
-      .insert([row])
+      .upsert([row], { onConflict: 'profile_id' })
       .select();
 
     if (error) {
-      console.warn('insertDbCustomer warning:', error.message);
+      console.warn('insertDbCustomer error:', error.message);
       return { success: false, error: error.message };
     }
 

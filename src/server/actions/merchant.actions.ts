@@ -1,7 +1,8 @@
 // ==============================================================================
 // src/server/actions/merchant.actions.ts
-// Server Actions for Merchant Operations, Price Quick-Update, and Bulk CSV
+// Server Actions for Merchant Operations, Atomic Onboarding, Price Updates, Bulk CSV
 // Secure, request-isolated, with authenticated user and shop ownership verification
+// Never creates fake IDs, never bypasses RLS, never mutates global products catalog
 // ==============================================================================
 
 'use server';
@@ -9,17 +10,18 @@
 import { 
   priceUpdateSchema, 
   productCreateSchema, 
+  becomeMerchantSchema,
   shopOnboardingSchema, 
   csvProductRowSchema,
   PriceUpdateInput,
   ProductCreateInput,
+  BecomeMerchantInput,
   ShopOnboardingInput,
   CsvProductRow
 } from '@/lib/validations';
 import { getProducts } from '@/server/queries/catalog.queries';
-import { MasterProduct, Shop } from '@/types';
-import { insertDbShop, upsertDbShopProduct, insertDbProduct, dbClient } from '@/lib/supabase/db';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { upsertDbShopProduct, dbClient } from '@/lib/supabase/db';
+import { getAuthenticatedUser, createAdminSupabase } from '@/lib/supabase/server';
 
 /** Helper to strictly verify that the authenticated user owns the given shop */
 async function verifyShopOwnership(userId: string, shopId: string): Promise<boolean> {
@@ -40,6 +42,69 @@ async function verifyShopOwnership(userId: string, shopId: string): Promise<bool
     return Boolean(!error && data);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Atomic merchant onboarding RPC wrapper.
+ * Creates merchants -> businesses -> shops in one single transaction.
+ * Never modifies profiles.role.
+ * Identity is derived strictly from getAuthenticatedUser().
+ */
+export async function becomeMerchantAction(input: BecomeMerchantInput) {
+  const validated = becomeMerchantSchema.safeParse(input);
+  if (!validated.success) {
+    return { success: false, error: validated.error.errors[0].message };
+  }
+
+  // Derive identity strictly from authenticated session
+  const user = await getAuthenticatedUser();
+  if (!user?.id) {
+    return { success: false, error: 'Authentication required: please log in before onboarding as a merchant.' };
+  }
+
+  try {
+    const adminSupabase = createAdminSupabase();
+    const { data, error } = await adminSupabase.rpc('onboard_merchant_atomic', {
+      p_profile_id: user.id,
+      p_owner_name: validated.data.ownerName,
+      p_mobile: validated.data.mobile,
+      p_business_name: validated.data.businessName,
+      p_shop_name: validated.data.shopName,
+      p_phone: validated.data.phone || validated.data.mobile,
+      p_whatsapp: validated.data.whatsapp || validated.data.phone || validated.data.mobile,
+      p_address: validated.data.address,
+      p_landmark: validated.data.landmark || null,
+      p_city: validated.data.city || 'Delhi',
+      p_state: validated.data.state || null,
+      p_pincode: validated.data.pincode || null,
+      p_latitude: validated.data.lat ?? 28.6328,
+      p_longitude: validated.data.lng ?? 77.2195,
+      p_opening_hours: validated.data.openingHours || '9:30 AM - 9:00 PM',
+      p_logo_url: validated.data.logoUrl || null,
+      p_photos: validated.data.photos || [],
+    });
+
+    if (error) {
+      console.error('becomeMerchantAction RPC error:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (!data?.merchant_id || !data?.shop_id) {
+      return { success: false, error: 'Onboarding failed: database did not return created IDs.' };
+    }
+
+    return {
+      success: true,
+      merchantId: data.merchant_id,
+      businessId: data.business_id,
+      shopId: data.shop_id,
+      shopSlug: data.shop_slug,
+      message: 'Merchant store onboarded successfully! Welcome to ShopMitra.'
+    };
+  } catch (err: any) {
+    console.error('becomeMerchantAction exception:', err);
+    return { success: false, error: err.message || 'Failed to complete merchant onboarding' };
   }
 }
 
@@ -88,7 +153,13 @@ export async function updateProductPriceAction(input: PriceUpdateInput) {
   return { success: true, message: 'Price and stock updated successfully! Live on customer comparison.' };
 }
 
-export async function createProductAction(input: ProductCreateInput) {
+/**
+ * Merchant product inventory management action.
+ * Products catalog is admin-curated. Merchants NEVER insert into global products.
+ * Merchants link an existing product to their shop_products.
+ * If product is not found in master catalog, returns an explicit rejection.
+ */
+export async function createProductAction(input: ProductCreateInput & { productId?: string }) {
   const validated = productCreateSchema.safeParse(input);
   if (!validated.success) {
     return { success: false, error: validated.error.errors[0].message };
@@ -113,67 +184,81 @@ export async function createProductAction(input: ProductCreateInput) {
   } else {
     // Look up merchant's own shop from DB
     const shops = await getMerchantShopsAction(user.id);
-    if (shops && shops.length > 0) {
-      targetShopId = shops[0].id;
+    if (!shops || shops.length === 0) {
+      return { success: false, error: 'No active shop found for your merchant account. Please onboard a shop first.' };
+    }
+    targetShopId = shops[0].id;
+  }
+
+  // 3. Resolve product from master catalog. Merchants MUST NOT insert into global products.
+  let masterProduct: any = null;
+  const providedProductId = (input as any).productId;
+
+  if (providedProductId && isUuid(providedProductId)) {
+    const { data: prod, error } = await dbClient
+      .from('products')
+      .select('id, name, mrp, category_id, image_url, is_active')
+      .eq('id', providedProductId)
+      .maybeSingle();
+
+    if (!error && prod) {
+      masterProduct = prod;
     }
   }
 
-  // 3. Insert into Supabase products table to get a real PostgreSQL UUID
-  let realProductId = `prod-${Date.now()}`;
-  try {
-    const dbProdRes = await insertDbProduct({
-      name: data.name,
-      brand: data.brand,
-      model: data.variantName || 'Standard',
-      description: data.description,
-      mrp: data.mrp,
-      imageUrl: data.imageUrl,
-      categoryId: data.categoryId,
-      specifications: {
-        'SKU': data.sku,
-        'Variant': data.variantName,
-      }
-    });
+  if (!masterProduct) {
+    // Search master catalog by exact name or model
+    const { data: prod, error } = await dbClient
+      .from('products')
+      .select('id, name, mrp, category_id, image_url, is_active')
+      .ilike('name', data.name.trim())
+      .maybeSingle();
 
-    if (dbProdRes.success && dbProdRes.data?.id) {
-      realProductId = dbProdRes.data.id;
+    if (!error && prod) {
+      masterProduct = prod;
     }
-  } catch (err) {
-    console.warn('insertDbProduct fallback warning:', err);
   }
 
-  const newProduct: MasterProduct = {
-    id: realProductId,
-    categoryId: data.categoryId,
-    subcategoryId: data.subcategoryId,
-    name: data.name,
-    slug: data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-    brand: data.brand,
-    model: data.variantName,
-    description: data.description,
-    mrp: data.mrp,
-    imageUrl: data.imageUrl,
-    galleryUrls: [],
-    specifications: {
-      'SKU': data.sku,
-      'Variant': data.variantName,
-    }
+  if (!masterProduct) {
+    return { 
+      success: false, 
+      error: 'Product not found in catalog. Contact admin to add the product.' 
+    };
+  }
+
+  // 4. Create or update shop_products linking merchant shop to catalog product
+  const { data: shopProduct, error: upsertErr } = await dbClient
+    .from('shop_products')
+    .upsert({
+      shop_id: targetShopId,
+      product_id: masterProduct.id,
+      current_price: data.sellingPrice,
+      previous_price: data.sellingPrice,
+      stock_status: data.stockStatus || 'in_stock',
+      stock_quantity: data.stockQuantity || 10,
+      status: 'active',
+      last_price_updated_at: new Date().toISOString(),
+    }, { onConflict: 'shop_id,product_id' })
+    .select()
+    .single();
+
+  if (upsertErr) {
+    return { success: false, error: `Failed to update inventory: ${upsertErr.message}` };
+  }
+
+  return {
+    success: true,
+    shopProduct,
+    message: `"${masterProduct.name}" added to your shop inventory successfully!`
   };
-
-  // 4. Link to authenticated merchant's shop
-  if (targetShopId && isUuid(targetShopId) && isUuid(newProduct.id)) {
-    await upsertDbShopProduct({
-      shopId: targetShopId,
-      productId: newProduct.id,
-      price: data.sellingPrice,
-      stockStatus: data.stockStatus,
-      stockQuantity: data.stockQuantity,
-    });
-  }
-
-  return { success: true, product: newProduct, message: 'Product published to your store catalog and saved to database!' };
 }
 
+/**
+ * Bulk upload products action for merchants.
+ * Validates category against database categories table.
+ * Resolves each product against master catalog.
+ * Reports exact succeeded and failed rows with real reasons.
+ */
 export async function bulkUploadProductsAction(rows: any[], shopId: string) {
   // 1. Authenticate caller
   const user = await getAuthenticatedUser();
@@ -187,54 +272,96 @@ export async function bulkUploadProductsAction(rows: any[], shopId: string) {
     return { success: false, error: 'Unauthorized: you do not own this shop' };
   }
 
+  // 3. Fetch real categories to resolve category names from CSV
+  const { data: dbCategories, error: catFetchErr } = await dbClient
+    .from('categories')
+    .select('id, name, slug')
+    .eq('is_active', true);
+
+  if (catFetchErr) {
+    return { success: false, error: `Failed to load categories: ${catFetchErr.message}` };
+  }
+
+  const categoryMap = new Map<string, string>();
+  dbCategories?.forEach(c => {
+    categoryMap.set(c.name.toLowerCase().trim(), c.id);
+    categoryMap.set(c.slug.toLowerCase().trim(), c.id);
+  });
+
   const successful: CsvProductRow[] = [];
   const failed: { row: number; data: any; reason: string }[] = [];
 
-  rows.forEach((rawRow, index) => {
+  for (let i = 0; i < rows.length; i++) {
+    const rawRow = rows[i];
+    const rowNumber = i + 1;
+
     const validated = csvProductRowSchema.safeParse(rawRow);
     if (!validated.success) {
       failed.push({
-        row: index + 1,
+        row: rowNumber,
         data: rawRow,
         reason: validated.error.errors.map(e => e.message).join(', ')
       });
-    } else {
-      successful.push(validated.data);
+      continue;
     }
-  });
 
-  const isUuid = (id?: string) => Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
-
-  // Process successful rows directly to database
-  for (const row of successful) {
-    let realId = `prod-bulk-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-    try {
-      const dbRes = await insertDbProduct({
-        name: row.name,
-        brand: row.brand,
-        mrp: row.mrp,
-        imageUrl: 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80',
-        categoryId: 'c1000000-0000-0000-0000-000000000001',
-        specifications: { Variant: row.variant }
+    const row = validated.data;
+    // Resolve category against database
+    const catId = categoryMap.get(row.category.toLowerCase().trim());
+    if (!catId) {
+      failed.push({
+        row: rowNumber,
+        data: rawRow,
+        reason: `Invalid category "${row.category}". Category must exist in master categories table.`
       });
-      if (dbRes.success && dbRes.data?.id) {
-        realId = dbRes.data.id;
-      }
-    } catch {}
-
-    if (isUuid(shopId) && isUuid(realId)) {
-      await upsertDbShopProduct({
-        shopId,
-        productId: realId,
-        price: row.sellingprice,
-        stockStatus: 'in_stock',
-        stockQuantity: row.stockcount
-      });
+      continue;
     }
+
+    // Resolve product against master products catalog
+    const { data: existingProd, error: prodErr } = await dbClient
+      .from('products')
+      .select('id, name, mrp')
+      .eq('category_id', catId)
+      .ilike('name', row.name.trim())
+      .maybeSingle();
+
+    if (prodErr || !existingProd) {
+      failed.push({
+        row: rowNumber,
+        data: rawRow,
+        reason: `Product "${row.name}" not found in catalog under category "${row.category}". Contact admin to add the product.`
+      });
+      continue;
+    }
+
+    // Upsert into shop_products
+    const { error: upsertErr } = await dbClient
+      .from('shop_products')
+      .upsert({
+        shop_id: shopId,
+        product_id: existingProd.id,
+        current_price: row.sellingprice,
+        previous_price: row.sellingprice,
+        stock_status: 'in_stock',
+        stock_quantity: row.stockcount || 10,
+        status: 'active',
+        last_price_updated_at: new Date().toISOString(),
+      }, { onConflict: 'shop_id,product_id' });
+
+    if (upsertErr) {
+      failed.push({
+        row: rowNumber,
+        data: rawRow,
+        reason: `Failed to link product to shop: ${upsertErr.message}`
+      });
+      continue;
+    }
+
+    successful.push(row);
   }
 
   return {
-    success: true,
+    success: failed.length === 0,
     totalProcessed: rows.length,
     successfulCount: successful.length,
     failedCount: failed.length,
@@ -250,44 +377,28 @@ export async function onboardShopAction(input: ShopOnboardingInput) {
 
   const user = await getAuthenticatedUser();
   if (!user) {
-    return { success: false, error: 'Unauthorized: please verify your phone or email first' };
+    return { success: false, error: 'Unauthorized: please sign in to onboard a shop' };
   }
 
-  const data = validated.data;
+  // Forward to atomic onboarding RPC
+  const res = await becomeMerchantAction({
+    ownerName: validated.data.ownerName,
+    mobile: validated.data.mobile,
+    businessName: validated.data.businessName,
+    shopName: validated.data.shopName,
+    phone: validated.data.mobile,
+    address: validated.data.address,
+    landmark: validated.data.landmark,
+    city: validated.data.city,
+    pincode: validated.data.pincode,
+    lat: validated.data.lat,
+    lng: validated.data.lng,
+    openingHours: validated.data.openingHours,
+    logoUrl: validated.data.photoUrl,
+    photos: validated.data.photoUrl ? [validated.data.photoUrl] : [],
+  });
 
-  const newShop: Shop = {
-    id: `shop-${Date.now()}`,
-    businessId: `biz-${Date.now()}`,
-    name: data.shopName,
-    slug: data.shopName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-    phone: data.mobile,
-    whatsapp: data.mobile,
-    address: data.address,
-    landmark: data.landmark,
-    city: data.city,
-    lat: data.lat,
-    lng: data.lng,
-    openingHours: data.openingHours,
-    weeklyHolidays: [],
-    isOpen: true,
-    isVerified: false,
-    verificationBadge: 'Pending Verification',
-    photos: [
-      data.photoUrl || 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&auto=format&fit=crop&q=80'
-    ],
-    rating: 5.0,
-    reviewCount: 0,
-    isActive: true,
-    createdAt: new Date().toISOString()
-  };
-
-  // Persist to Supabase
-  const dbRes = await insertDbShop(newShop);
-  if (dbRes.success && dbRes.data?.id) {
-    newShop.id = dbRes.data.id;
-  }
-
-  return { success: true, shop: newShop, message: 'Shop onboarded successfully! Welcome to ShopMitra.' };
+  return res;
 }
 
 export async function getMerchantShopsAction(requestedUserId?: string) {

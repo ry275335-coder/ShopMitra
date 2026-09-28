@@ -19,6 +19,32 @@ export const signupSchema = z.object({
 });
 
 // 2. Merchant & Shop Onboarding Schemas
+export const becomeMerchantSchema = z.object({
+  ownerName: z.string().min(2, 'Owner name is required'),
+  mobile: z
+    .string()
+    .transform((val) => val.replace(/\D/g, '').slice(-10))
+    .refine((val) => /^[6-9]\d{9}$/.test(val), {
+      message: 'Please enter a valid 10-digit Indian mobile number',
+    }),
+  businessName: z.string().min(2, 'Business name is required'),
+  shopName: z.string().min(2, 'Shop name is required'),
+  phone: z.string().min(10, 'Valid phone number is required'),
+  whatsapp: z.string().optional(),
+  address: z.string().min(5, 'Physical address must be at least 5 characters'),
+  landmark: z.string().optional(),
+  city: z.string().min(2, 'City is required').default('Delhi'),
+  state: z.string().optional(),
+  pincode: z.string().regex(/^\d{6}$/, 'Please enter a valid 6-digit postal pincode').optional().or(z.literal('')),
+  lat: z.number().min(-90).max(90).default(28.6328),
+  lng: z.number().min(-180).max(180).default(77.2195),
+  openingHours: z.string().min(3).default('9:30 AM - 9:00 PM'),
+  logoUrl: z.string().optional().or(z.literal('')),
+  photos: z.array(z.string()).optional().default([]),
+});
+
+export type BecomeMerchantInput = z.infer<typeof becomeMerchantSchema>;
+
 export const shopOnboardingSchema = z.object({
   ownerName: z.string().min(2, 'Owner name is required'),
   mobile: z
@@ -89,8 +115,8 @@ export const csvProductRowSchema = z.object({
 export const enquiryCreateSchema = z.object({
   shopId: z.string().uuid(),
   productId: z.string().uuid(),
-  customerName: z.string().min(2, 'Name is required'),
-  customerPhone: z.string().regex(/^[6-9]\d{9}$/, 'Please enter a valid 10-digit mobile number'),
+  customerName: z.string().optional(),
+  customerPhone: z.string().optional(),
   message: z.string().min(5, 'Message must be at least 5 characters long'),
 });
 
@@ -99,8 +125,8 @@ export const priceAlertCreateSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
   targetPrice: z.number().positive('Target price must be greater than 0'),
   radiusKm: z.number().int().min(1).max(50).default(10),
-  lat: z.number(),
-  lng: z.number(),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
   phone: z.string().optional(),
   email: z.string().email().optional(),
 });

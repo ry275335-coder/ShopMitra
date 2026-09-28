@@ -320,49 +320,13 @@ export function buildProductRatesMap(
     });
   }
 
-  // Ensure every catalog product has local counter availability from an active store
-  const activeShops = Array.from(shopMap.values());
-  if (activeShops.length > 0) {
-    const primaryShop = activeShops[0];
-    const distKm = calculateHaversineDistance(userLocation.lat, userLocation.lng, primaryShop.lat, primaryShop.lng);
-    productsList.forEach(product => {
-      if (!ratesByProduct[product.id] || ratesByProduct[product.id].length === 0) {
-        ratesByProduct[product.id] = [{
-          id: `rate-default-${primaryShop.id}-${product.id}`,
-          shopId: primaryShop.id,
-          shopName: primaryShop.name,
-          shopSlug: primaryShop.slug,
-          shopPhone: primaryShop.phone,
-          shopWhatsapp: primaryShop.whatsapp || primaryShop.phone,
-          shopAddress: primaryShop.address,
-          shopLatitude: primaryShop.lat,
-          shopLongitude: primaryShop.lng,
-          isVerified: primaryShop.isVerified,
-          verificationBadge: primaryShop.verificationBadge,
-          rating: primaryShop.rating,
-          reviewCount: primaryShop.reviewCount,
-          distanceKm: distKm,
-          distanceMeters: Math.round(distKm * 1000),
-          productId: product.id,
-          productName: product.name,
-          productBrand: product.brand,
-          productImage: product.imageUrl,
-          currentPrice: product.mrp,
-          previousPrice: product.mrp,
-          mrp: product.mrp,
-          savings: 0,
-          stockStatus: 'in_stock',
-          stockQuantity: 10,
-          lastPriceUpdatedAt: new Date().toISOString(),
-          lastStockUpdatedAt: new Date().toISOString(),
-          freshness: 'recently_updated',
-          freshnessTier: 'recently_updated',
-          freshnessLabel: 'Counter Rate (MRP)',
-          isAnomalyFlagged: false
-        }];
-      }
-    });
-  }
+  // If no actual shop_products/inventory exists, leave empty/unavailable
+  // Never fabricate in-stock status or mock rates
+  productsList.forEach(product => {
+    if (!ratesByProduct[product.id]) {
+      ratesByProduct[product.id] = [];
+    }
+  });
 
   for (const pId in ratesByProduct) {
     ratesByProduct[pId].sort((a, b) => a.currentPrice - b.currentPrice);

@@ -8,7 +8,8 @@
 
 import React, { useState, useRef } from 'react';
 import { useApp } from '@/components/common/AppContext';
-import { onboardShopAction } from '@/server/actions/merchant.actions';
+import { becomeMerchantAction } from '@/server/actions/merchant.actions';
+import { createClient } from '@/lib/supabase/client';
 import { SEED_CATEGORIES } from '@/lib/data/store';
 import {
   sendPhoneOtp,
@@ -18,11 +19,6 @@ import {
   maskPhone,
   maskEmail,
 } from '@/lib/supabase/auth';
-import {
-  upsertProfile,
-  upsertMerchantRecord,
-  createMerchantShopRecord,
-} from '@/lib/supabase/profile';
 import { OtpInput } from '@/components/auth/OtpInput';
 import {
   X,
@@ -292,52 +288,52 @@ export function MerchantOnboardingModal({
     }
   };
 
-  // ── Photo handling (with client-side image compression) ────────────────────────
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── Photo handling (Supabase Storage: Max 5MB, JPEG/PNG/WebP) ───────────────
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const src = event.target?.result as string;
-      if (!src) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image size exceeds 5 MB limit. Please select a smaller photo.', 'error');
+      return;
+    }
 
-      const img = new Image();
-      img.onload = () => {
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
-        let width = img.width;
-        let height = img.height;
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      showToast('Invalid format. Allowed formats are JPEG, PNG, and WebP.', 'error');
+      return;
+    }
 
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height = Math.round((height * MAX_WIDTH) / width);
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width = Math.round((width * MAX_HEIGHT) / height);
-            height = MAX_HEIGHT;
-          }
-        }
+    try {
+      showToast('Uploading storefront photo...', 'info');
+      const supabase = createClient();
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const activeId = authUser?.id || supabaseUserId || 'store';
+      const filePath = `${activeId}/${Date.now()}.${fileExt}`;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
-          setForm((prev) => ({ ...prev, photoUrl: compressedDataUrl }));
-          showToast('📸 Storefront photo optimized and loaded!');
-        } else {
-          setForm((prev) => ({ ...prev, photoUrl: src }));
-          showToast('📸 Storefront photo loaded!');
-        }
-      };
-      img.src = src;
-    };
-    reader.readAsDataURL(file);
+      const { data, error } = await supabase.storage
+        .from('shop-images')
+        .upload(filePath, file, { contentType: file.type, upsert: true });
+
+      if (error) {
+        console.warn('Shop image storage upload fallback:', error.message);
+        const objectUrl = URL.createObjectURL(file);
+        setForm((prev) => ({ ...prev, photoUrl: objectUrl }));
+        showToast('Storefront photo selected!');
+        return;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('shop-images')
+        .getPublicUrl(filePath);
+
+      if (urlData?.publicUrl) {
+        setForm((prev) => ({ ...prev, photoUrl: urlData.publicUrl }));
+        showToast('📸 Storefront photo uploaded successfully!');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error processing photo', 'error');
+    }
   };
 
   // ── GPS Pin ───────────────────────────────────────────────────────────────────
@@ -393,111 +389,79 @@ export function MerchantOnboardingModal({
       const cleanMobile = rawMobile.replace(/\D/g, '').slice(-10) || '9876543210';
       const userEmail = email || authUser?.email || customerUser?.email || '';
 
-      let registeredShopObj: any = null;
+      // Invoke server-side atomic onboarding RPC via becomeMerchantAction
+      // Identity derived strictly server-side — never modifies profiles.role
+      const res = await becomeMerchantAction({
+        ownerName: form.ownerName.trim(),
+        mobile: cleanMobile,
+        businessName: form.businessName.trim() || form.shopName.trim(),
+        shopName: form.shopName.trim(),
+        phone: cleanMobile,
+        address: form.address.trim(),
+        landmark: form.landmark?.trim() || undefined,
+        city: form.city || 'Delhi',
+        lat: form.lat,
+        lng: form.lng,
+        openingHours: form.openingHours,
+        logoUrl: form.photoUrl || undefined,
+        photos: form.photoUrl ? [form.photoUrl] : [],
+      });
 
-      // 1. Upsert profile with merchant role & persist merchant, business, and shop
-      if (activeUserId) {
-        await upsertProfile(activeUserId, {
-          fullName: form.ownerName,
-          role: 'merchant',
-          phone: cleanMobile,
-          email: userEmail,
-        });
-
-        // 2. Persist merchant, business entity, and physical shop to Supabase DB
-        const shopRes = await createMerchantShopRecord(activeUserId, {
-          ownerName: form.ownerName,
-          mobile: cleanMobile,
-          businessName: form.businessName || form.shopName,
-          shopName: form.shopName,
-          category: form.category,
-          address: form.address,
-          landmark: form.landmark,
-          city: form.city,
-          lat: form.lat,
-          lng: form.lng,
-          openingHours: form.openingHours,
-          photoUrl: form.photoUrl,
-        });
-
-        if (shopRes.success && shopRes.shop) {
-          const s = shopRes.shop;
-          registeredShopObj = {
-            id: s.id,
-            businessId: s.business_id || '',
-            name: s.name,
-            slug: s.slug,
-            phone: s.phone,
-            whatsapp: s.whatsapp,
-            address: s.address,
-            landmark: s.landmark || '',
-            city: s.city,
-            lat: form.lat,
-            lng: form.lng,
-            openingHours: s.opening_hours,
-            weeklyHolidays: [],
-            isOpen: s.is_open ?? true,
-            isVerified: s.is_verified ?? false,
-            verificationBadge: 'Verified Store',
-            photos: s.photos && s.photos.length > 0 ? s.photos : (form.photoUrl ? [form.photoUrl] : []),
-            rating: Number(s.rating) || 5.0,
-            reviewCount: Number(s.review_count) || 0,
-            isActive: true,
-            createdAt: s.created_at || new Date().toISOString(),
-          };
-        }
+      if (!res.success || !res.shopId) {
+        showToast(res.error || 'Failed to complete registration. Please check your details.', 'error');
+        setIsSubmitting(false);
+        return;
       }
 
-      // 3. Fallback to server action only if direct DB creation was unavailable
-      if (!registeredShopObj) {
-        const res = await onboardShopAction({
-          ownerName: form.ownerName,
-          mobile: cleanMobile,
-          businessName: form.businessName || form.shopName,
-          shopName: form.shopName,
-          category: form.category,
-          address: form.address,
-          landmark: form.landmark,
-          city: form.city,
-          lat: form.lat,
-          lng: form.lng,
-          openingHours: form.openingHours,
-          photoUrl: form.photoUrl,
-        });
+      const registeredShopObj = {
+        id: res.shopId,
+        businessId: res.businessId || '',
+        name: form.shopName,
+        slug: res.shopSlug || form.shopName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        phone: cleanMobile,
+        whatsapp: cleanMobile,
+        address: form.address,
+        landmark: form.landmark || '',
+        city: form.city,
+        lat: form.lat,
+        lng: form.lng,
+        openingHours: form.openingHours,
+        weeklyHolidays: [],
+        isOpen: true,
+        isVerified: false,
+        verificationBadge: 'Verified Store',
+        photos: form.photoUrl ? [form.photoUrl] : [],
+        rating: 5.0,
+        reviewCount: 0,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+      };
 
-        if (res.success && res.shop) {
-          registeredShopObj = res.shop;
-        }
-      }
+      registerNewShop(registeredShopObj);
+      setActiveMerchantShopId(registeredShopObj.id);
 
-      if (registeredShopObj) {
-        registerNewShop(registeredShopObj);
-        setActiveMerchantShopId(registeredShopObj.id);
+      // Update local customer/merchant state in AppContext
+      loginCustomer({
+        name: form.ownerName,
+        mobile: cleanMobile,
+        email: userEmail,
+        city: form.city,
+        address: form.address,
+        lat: form.lat,
+        lng: form.lng,
+        supabaseUserId: activeUserId,
+      });
 
-        // Also update AppContext with merchant login info
-        loginCustomer({
-          name: form.ownerName,
-          mobile: cleanMobile,
-          email: userEmail,
-          city: form.city,
-          address: form.address,
-          lat: form.lat,
-          lng: form.lng,
-          supabaseUserId: activeUserId,
-        });
+      switchPortal('merchant');
 
-        switchPortal('merchant');
+      // Refresh multi-account capability status (merchants table presence)
+      await refreshAccountStatus();
 
-        await refreshAccountStatus();
-
-        showToast('🎉 Store registered in database! Welcome to ShopMitra Merchant Portal.');
-        if (onSuccess) onSuccess();
-        else onClose();
-      } else {
-        showToast('Failed to complete registration. Please check your details.', 'error');
-      }
-    } catch {
-      showToast('Network error while registering shop', 'error');
+      showToast('🎉 Store registered in database! Welcome to ShopMitra Merchant Portal.');
+      if (onSuccess) onSuccess();
+      else onClose();
+    } catch (err: any) {
+      showToast(err.message || 'Network error while registering shop', 'error');
     } finally {
       setIsSubmitting(false);
     }

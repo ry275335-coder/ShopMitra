@@ -28,6 +28,7 @@ import {
   verifyInStoreProximity,
   saveVerifiedReview
 } from '@/lib/reviews';
+import { submitReviewAction } from '@/server/actions/review.actions';
 import { useToast } from '@/components/ui/Toast';
 
 interface VerifiedReviewModalProps {
@@ -53,6 +54,7 @@ export function VerifiedReviewModal({
   const [photos, setPhotos] = useState<string[]>([]);
   const [hasBillProof, setHasBillProof] = useState<boolean>(false);
   const [forceInStoreSimulation, setForceInStoreSimulation] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Calculate real GPS proximity
   const proximity = useMemo(() => {
@@ -97,7 +99,7 @@ export function VerifiedReviewModal({
     setPhotos(prev => prev.filter((_, idx) => idx !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!reviewText.trim()) {
@@ -105,29 +107,50 @@ export function VerifiedReviewModal({
       return;
     }
 
-    const review: VerifiedReview = {
-      id: `rev-${Date.now()}`,
-      shopId: shop.id,
-      shopName: shop.name,
-      authorName: authorName.trim() || 'Verified Customer',
-      rating,
-      reviewText: reviewText.trim(),
-      photos,
-      tags: selectedTags,
-      isInStoreVerified: isInStore,
-      distanceMetersAtReview: displayDistance,
-      hasBillProof,
-      createdAt: new Date().toISOString(),
-    };
+    setIsSubmitting(true);
+    try {
+      const res = await submitReviewAction({
+        shopId: shop.id,
+        rating,
+        reviewText: reviewText.trim(),
+        photos,
+        isInStoreVerified: isInStore,
+      });
 
-    saveVerifiedReview(review);
-    showToast('🌟 Your verified in-store review has been posted!');
-    if (onReviewSubmitted) onReviewSubmitted(review);
+      if (!res.success) {
+        showToast(res.error || 'Failed to submit review to database', 'error');
+        setIsSubmitting(false);
+        return;
+      }
 
-    // Reset & close
-    setReviewText('');
-    setPhotos([]);
-    onClose();
+      const review: VerifiedReview = {
+        id: res.reviewId || `rev-${Date.now()}`,
+        shopId: shop.id,
+        shopName: shop.name,
+        authorName: authorName.trim() || 'Verified Customer',
+        rating,
+        reviewText: reviewText.trim(),
+        photos,
+        tags: selectedTags,
+        isInStoreVerified: isInStore,
+        distanceMetersAtReview: displayDistance,
+        hasBillProof,
+        createdAt: (res.data as any)?.created_at || new Date().toISOString(),
+      };
+
+      saveVerifiedReview(review);
+      showToast(res.message || '🌟 Your verified in-store review has been posted!');
+      if (onReviewSubmitted) onReviewSubmitted(review);
+
+      // Reset & close
+      setReviewText('');
+      setPhotos([]);
+      onClose();
+    } catch (err: any) {
+      showToast(err.message || 'Error submitting review', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -335,10 +358,11 @@ export function VerifiedReviewModal({
           {/* Submit Button */}
           <button
             type="submit"
-            className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all mt-2"
+            disabled={isSubmitting}
+            className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-extrabold text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all mt-2"
           >
             <Send className="w-4 h-4" />
-            <span>Post Verified Review</span>
+            <span>{isSubmitting ? 'Posting Review...' : 'Post Verified Review'}</span>
           </button>
         </form>
       </div>

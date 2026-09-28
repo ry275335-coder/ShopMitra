@@ -23,6 +23,7 @@ import {
   type MerchantRecord,
   type UserAccountStatus
 } from '@/lib/supabase/profile';
+import { getWishlistAction, toggleWishlistAction } from '@/server/actions/wishlist.actions';
 
 export type PortalType = 'customer' | 'merchant' | 'admin';
 
@@ -242,12 +243,19 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
       setCustomerUser(user_obj);
 
-      // Load user-scoped wishlist
+      // Load user-scoped wishlist from database
       try {
         const savedWishlist = localStorage.getItem(`shopmitra_wishlist_${user.id}`);
         if (savedWishlist) setWishlist(JSON.parse(savedWishlist));
-        else setWishlist([]);
       } catch {}
+      getWishlistAction().then((res) => {
+        if (res.success && res.items) {
+          setWishlist(res.items);
+          try {
+            localStorage.setItem(`shopmitra_wishlist_${user.id}`, JSON.stringify(res.items));
+          } catch {}
+        }
+      }).catch((err) => console.warn('Wishlist DB sync notice:', err));
 
       // Load merchant shops if merchant account exists
       if (status.hasMerchantAccount) {
@@ -601,18 +609,29 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     showToast(`Switched to ${newRole.charAt(0).toUpperCase() + newRole.slice(1)} Portal`, 'info');
   };
 
-  // ── Wishlist (User-scoped storage) ───────────────────────────────────────────
+  // ── Wishlist (DB-backed + local sync) ─────────────────────────────────────────
   const toggleWishlist = (productId: string) => {
+    const isAdding = !wishlist.includes(productId);
     setWishlist((prev) => {
       const updated = prev.includes(productId)
         ? prev.filter((id) => id !== productId)
         : [...prev, productId];
-      if (!prev.includes(productId)) showToast('Saved to your wishlist ❤️');
+      if (isAdding) showToast('Saved to your wishlist ❤️');
       else showToast('Item removed from wishlist');
       const key = authUser?.id ? `shopmitra_wishlist_${authUser.id}` : 'shopmitra_wishlist_guest';
       try { localStorage.setItem(key, JSON.stringify(updated)); } catch {}
       return updated;
     });
+
+    if (authUser?.id) {
+      toggleWishlistAction(productId).then((res) => {
+        if (!res.success) {
+          console.warn('Wishlist DB sync failed:', res.error);
+        }
+      }).catch((err) => {
+        console.warn('Wishlist DB sync error:', err);
+      });
+    }
   };
 
   // ── Price Alerts ─────────────────────────────────────────────────────────────

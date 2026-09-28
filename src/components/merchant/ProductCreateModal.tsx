@@ -36,6 +36,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { BarcodeScannerOverlay } from '@/components/common/BarcodeScannerOverlay';
 import { BarcodeProductInfo } from '@/lib/barcodeCatalog';
+import { createClient } from '@/lib/supabase/client';
 
 
 
@@ -111,6 +112,7 @@ export function ProductCreateModal({
   const [categorySearchQuery, setCategorySearchQuery] = useState('');
   const [showTitleSuggestions, setShowTitleSuggestions] = useState(false);
   const [titleSuggestions, setTitleSuggestions] = useState<ProductSuggestionItem[]>([]);
+  const [selectedCatalogProductId, setSelectedCatalogProductId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: '',
@@ -130,6 +132,7 @@ export function ProductCreateModal({
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setForm(prev => ({ ...prev, name: val }));
+    setSelectedCatalogProductId(null);
     if (val.trim().length >= 1) {
       const results = searchProductSuggestions(val, form.categoryId, 8);
       setTitleSuggestions(results);
@@ -140,6 +143,7 @@ export function ProductCreateModal({
   };
 
   const handleSelectSuggestion = (item: ProductSuggestionItem) => {
+    setSelectedCatalogProductId((item as any).id || (item as any).productId || null);
     setForm(prev => ({
       ...prev,
       name: item.name,
@@ -156,6 +160,7 @@ export function ProductCreateModal({
   };
 
   const handleBarcodeDetected = (product: BarcodeProductInfo, rawBarcode: string) => {
+    setSelectedCatalogProductId((product as any).id || (product as any).productId || null);
     setForm(prev => ({
       ...prev,
       name: product.name || prev.name,
@@ -222,17 +227,44 @@ export function ProductCreateModal({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image size exceeds 5 MB limit. Please select a smaller photo.', 'error');
+      return;
+    }
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      showToast('Invalid format. Allowed formats are JPEG, PNG, and WebP.', 'error');
+      return;
+    }
+
     setIsProcessingImage(true);
     try {
-      const compressedDataUrl = await compressImageFile(file);
-      setForm(prev => ({ ...prev, imageUrl: compressedDataUrl }));
-      showToast(source === 'camera' ? '📷 Product photo captured!' : '🖼️ Photo selected from gallery!');
-    } catch (err) {
-      console.error('Failed to process image', err);
-      showToast('Could not process photo. Please try again.', 'error');
+      showToast('Uploading product photo to storage...', 'info');
+      const supabase = createClient();
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+      const { data, error } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, file, { contentType: file.type, upsert: true });
+
+      if (error) {
+        console.warn('Product image storage upload fallback:', error.message);
+        const objectUrl = URL.createObjectURL(file);
+        setForm(prev => ({ ...prev, imageUrl: objectUrl }));
+      } else {
+        const { data: urlData } = supabase.storage
+          .from('product-images')
+          .getPublicUrl(filePath);
+        if (urlData?.publicUrl) {
+          setForm(prev => ({ ...prev, imageUrl: urlData.publicUrl }));
+          showToast(source === 'camera' ? '📷 Product photo uploaded!' : '🖼️ Photo uploaded to storage!');
+        }
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error uploading photo', 'error');
     } finally {
       setIsProcessingImage(false);
-      // Reset input value so re-selecting same file triggers onChange
       e.target.value = '';
     }
   };
@@ -288,16 +320,35 @@ export function ProductCreateModal({
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setForm(prev => ({ ...prev, imageUrl: dataUrl }));
-      showToast('📷 Live photo captured successfully!');
+      canvas.toBlob(async (blob) => {
+        if (blob) {
+          try {
+            const supabase = createClient();
+            const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+            const { error } = await supabase.storage
+              .from('product-images')
+              .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+
+            if (!error) {
+              const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(filePath);
+              if (urlData?.publicUrl) {
+                setForm(prev => ({ ...prev, imageUrl: urlData.publicUrl }));
+                showToast('📷 Live photo uploaded to storage!');
+              }
+            } else {
+              const objectUrl = URL.createObjectURL(blob);
+              setForm(prev => ({ ...prev, imageUrl: objectUrl }));
+            }
+          } catch (err) {
+            console.warn('Live camera storage upload error:', err);
+          }
+        }
+      }, 'image/jpeg', 0.85);
     }
     stopLiveCamera();
   };
 
   if (!isOpen) return null;
-
-
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -306,6 +357,7 @@ export function ProductCreateModal({
     try {
       const res = await createProductAction({
         shopId: activeMerchantShopId,
+        productId: selectedCatalogProductId || undefined,
         name: form.name.trim(),
         brand: form.brand.trim() || 'General',
         categoryId: form.categoryId,
@@ -325,7 +377,7 @@ export function ProductCreateModal({
           try {
             const key = 'shopmitra_shop_inventory_' + activeMerchantShopId;
             const existing = JSON.parse(localStorage.getItem(key) || '[]');
-            const prodId = res.product?.id || `prod-${Date.now()}`;
+            const prodId = (res as any).shopProduct?.product_id || selectedCatalogProductId || `prod-${Date.now()}`;
             existing.unshift({
               id: `inv-${Date.now()}`,
               shop_id: activeMerchantShopId,
